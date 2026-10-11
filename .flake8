@@ -1,0 +1,5 @@
+[flake8]
+# Same line length as black; E203/W503 conflict with black's formatting.
+max-line-length = 88
+extend-ignore = E203, W503
+exclude = .git, .venv, __pycache__, .dvc, data, build, dist
