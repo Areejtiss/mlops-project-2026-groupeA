@@ -8,6 +8,10 @@
 
 - Modèle enregistré dans le MLflow Model Registry sous le nom **`crediscore`**.
 - Deux alias : **`champion`** (servi par l'API) et **`challenger`** (candidat à la promotion). Les stages `Staging`/`Production` sont dépréciés dans MLflow et ne sont pas utilisés.
+- **Promotion** (`models/promote.py`, T7, D5). Le challenger devient champion si **toutes** ces conditions sont vraies, sur le même jeu récent pour les deux modèles :
+  - AUC du challenger ≥ AUC du champion, et ≥ 0,75 ;
+  - **sexe** : écart de taux d'acceptation (`ACCEPTE` seulement) entre F et M, `XNA` exclu, ≤ 10 pts, **et** écart d'égalité des chances ≤ 10 pts ;
+  - **âge** (<30, 30-50, ≥50) : écart d'égalité des chances du challenger ≤ celui du champion + 2 pts. Pas de seuil absolu ; les deux écarts d'âge sont publiés à chaque évaluation.
 - L'API charge `models:/crediscore@champion`. La « version du modèle » (`model_version`) est le numéro de version du Registry, en chaîne (ex. `"3"`).
 
 ## 2. Flavor et objet exact

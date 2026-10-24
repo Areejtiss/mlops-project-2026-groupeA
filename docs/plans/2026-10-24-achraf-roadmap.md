@@ -6,7 +6,7 @@
 
 - **Base read:** branch `dev` = `main` = `0de3860` (2026-10-11); `origin/feat/iyed-serving-cicd` = `91e5e1b` (2026-10-24, CI only, not merged).
 - **Owner:** Achraf Gharbi. **Written:** 2026-10-24.
-- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); awaiting adversarial review, team approval of contracts 2/3, and a new D5 decision (equal opportunity does not close the age gap).
+- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2).
 
 ---
 
@@ -60,6 +60,13 @@ Contract 2 must state:
 ## 2. Decisions — recommendation first
 
 > **Decided 2026-10-24 (Achraf):** the recommended option is adopted for D1, D2, D3, D4, D5, D6, D8, D9, D10. D3 values: `cost_review = 0.3`, `max_review_share = 0.15`; D8 adds `min_recall = 0.65`. Team-facing summary and actions per member: `docs/decisions/2026-10-24-decisions-modelisation.md` (to paste in the PR description). Decisions marked "Team" stay open to objection from Areej and Iyed until the PR is approved.
+> **D5 decided 2026-10-25 (human), replacing "a then b":**
+> - **Gender: absolute gate.** The acceptance-rate gap (`ACCEPTE` only) between F and M, `XNA` excluded, must be ≤ 10 pts, and the equal-opportunity gap must also be ≤ 10 pts. Baseline: 7.8 / 6.6 pts.
+> - **Age bands (<30, 30–50, ≥50): no absolute gate.** Non-regression rule: the challenger's age equal-opportunity gap ≤ the champion's + 2 pts. Both age gaps are published at every evaluation and tracked over time (lot 6).
+> - **Why (for the report):** age is a real risk driver in this data (the <30 band defaults about 2× the ≥50 band: 11.4 % vs 5.7 %) and a model feature. The baseline age gap is 34.5 pts raw / 32.9 pts equal opportunity, so an absolute 10-pt rule would block every promotion.
+> - Lot 3 adds one MLflow experiment, LightGBM without `AGE_YEARS`, to measure the AUC/cost vs age-gap trade-off.
+> - The teacher is told that the SYNOPSIS KPI "gap ≤ 10 pts" now applies to gender, and that age is "measured, explained, without degradation".
+>
 > **Closed 2026-10-24:** D7: no fixed dates; lots run back to back, as fast as quality allows. D11: the commit e-mail is Achraf's and is linked to his GitHub account.
 
 Wording for non-developers in each line. Technical decisions are at the end.
@@ -70,7 +77,7 @@ Wording for non-developers in each line. Technical decisions are at the end.
 | D2 | Ratios like "annuity / income" are computed by Areej's data step. At prediction time someone must compute them **exactly the same way**, or the model sees different numbers than in training ("train/serve skew") | a) the model artifact starts with Areej's function, so the API sends raw fields (`DAYS_BIRTH`…); this changes contracts 1, 2 and 3 · b) the API calls the same shared function before the model; the model takes `params.features.all` · c) the client sends already-computed ratios | **b)**: keeps contract 1 and the model input as they are; one shared function, imported by both Areej's step and Iyed's API, plus a test that both paths give identical columns | **Whole team** | lot 2 (contract 2) |
 | D3 | With 3 zones (accept / review / refuse), what does one manual review cost, compared to a missed default (5) and a wrongly refused good client (1)? | a) add `cost.cost_review` and optimize both cut-offs · b) a fixed grey band around one cut-off · c) review band sized by analyst capacity (e.g. ≤ 10 % of files) | **a) + a capacity cap (c)**. With review = 0.3 the optimum is "accept if risk < 6 %, refuse if > 70 %": about **half** the applicants would go to review, which is unrealistic. A cap like "≤ 15 % of files to review" keeps it usable. Share of files in review shown with the numbers in lot 1 | Achraf + Areej (params) | lot 2 |
 | D4 | Exact decision strings in the API answer | a) `ACCEPTE` / `A_ETUDIER` / `REFUSE` · b) `ACCEPTÉ` / `À ÉTUDIER` / `REFUSÉ` (roadmap and SYNOPSIS) | **a)**: no accents or spaces in a machine code; accents in the report and UI only. Also fix `params.yaml:85` | **Whole team** (contract 3) | lot 1 |
-| D5 | Fairness gate for promotion. SYNOPSIS: "acceptance-rate gap ≤ 10 pts". Under-30s default about 2× more than over-50s, and age is itself a model feature, so the age gap may exceed 10 pts at any useful cut-off and **no model would ever be promoted** | a) measure on the baseline first (lot 1), then decide · b) gate on "equal opportunity": among clients who **did** repay, the acceptance gap between groups ≤ 10 pts; report the raw gap too · c) keep the raw gap | **a) then b) if the raw gap fails**. Changing a SYNOPSIS KPI must be told to the teacher | Team | lot 4 |
+| D5 | Fairness gate for promotion. SYNOPSIS: "acceptance-rate gap ≤ 10 pts". Under-30s default about 2× more than over-50s, and age is itself a model feature, so the age gap may exceed 10 pts at any useful cut-off and **no model would ever be promoted** | a) measure on the baseline first (lot 1), then decide · b) gate on "equal opportunity": among clients who **did** repay, the acceptance gap between groups ≤ 10 pts; report the raw gap too · c) keep the raw gap | **Decided 2026-10-25 (human):** gender, absolute gate, raw ≤ 10 pts **and** equal opportunity ≤ 10 pts (XNA excluded); age, non-regression, challenger's equal-opportunity gap ≤ champion's + 2 pts, both age gaps published and tracked. Tell the teacher | Team | lot 4 |
 | D6 | PR target branch | a) `main` · b) `dev`, then release to `main` | **a)**: CI only runs on PRs to `main`. Ask Iyed to add `feature/**` to the push trigger and to fix `cache: poetry` | Team | first PR |
 | D7 | Real dates of S3…S8, Jalon 2, and the defense | — | needed to date the lots and re-plan | Human | planning |
 | D8 | With 3 zones, how do the SYNOPSIS KPIs count "to review"? Recall ≥ 65 %: is a default sent to review "detected"? Acceptance rate and fairness: is review "accepted"? | a) review = detected for recall, **not** accepted for acceptance/fairness (prudent reading) · b) review = accepted everywhere · c) KPIs computed on a 2-zone cut (review merged into refuse) | **a)**. The single cost-optimal cut-off (risk 1/6) gives a recall of only ~50 % at AUC 0.76, so the 65 % target needs either a) or a recall constraint in the optimizer (applied anyway) | Team | lot 2 |
@@ -239,7 +246,7 @@ Also write in the notebook why the cost ratio is 5:1 (roadmap requirement).
 
 - Baseline cost on this test split: **0.325 per file** (≤ 0.276 for −15 %). Valid only on the same test split: lot 3 `evaluate` recomputes the baseline on Areej's test split.
 - D3 confirmed: without a cap, half of the files go to review. D8: a single cut-off gives only 38 % recall (not ~50 % as estimated in D8); with recall ≥ 65 % it costs more than accepting everyone (0.409 vs 0.404). 3 zones fix this. The review cap is not hit exactly (14.2 %) because isotonic probabilities come in steps.
-- **D5 measurement** (test, D3 thresholds, "accepted" = `ACCEPTE` only, D8): age gap **34.5 pts raw, 32.9 pts equal opportunity**; gender 7.8 / 6.6 pts. With the single cut-off: age 22.2 / 19.0, gender 5.9 / 4.5. Equal opportunity does not bring the age gap under 10 pts. The fairness rule is waiting for the human's decision.
+- **D5 measurement** (test, D3 thresholds, "accepted" = `ACCEPTE` only, D8): age gap **34.5 pts raw, 32.9 pts equal opportunity**; gender 7.8 / 6.6 pts. With the single cut-off: age 22.2 / 19.0, gender 5.9 / 4.5. Equal opportunity does not bring the age gap under 10 pts. D5 was then decided on 2026-10-25 (section 2): the baseline passes the gender gate; the age rule is non-regression.
 - No `XNA` row in the test split (4 in the whole dataset).
 
 **Deviations and why:**
@@ -316,11 +323,14 @@ Test: `main()` on synthetic data, in a `tmp_path`, with the MLflow URI `sqlite:/
 
 **2. Optuna.** 20–30 trials on LightGBM and XGBoost, each trial a nested MLflow run. Objective: CV ROC-AUC on the training part. Seeded sampler.
 
+**2b. Age trade-off experiment (D5).** One more MLflow experiment: LightGBM **without `AGE_YEARS`**, to measure the AUC / cost vs age-gap trade-off for the report. It is a measurement, not a promotion candidate.
+
 **3. `models/evaluate.py`.** This is the `evaluate` stage and the **only** reader of the test split for model selection. It writes `reports/metrics.json`, tracked with `dvc metrics`:
 - ROC-AUC, PR-AUC, Brier, recall (D8), cost;
 - **cost vs the LogReg baseline (KPI −15 %)**. `evaluate` **recomputes the LogReg baseline on the same test split**, with the same constraints. The −15 % reference is only valid that way, not against the lot 1 notebook number;
 - thin-file AUC, acceptance rate, and good payers accepted vs the D10 policy;
-- cost vs "accept all".
+- cost vs "accept all";
+- fairness (D5): gender raw and equal-opportunity gaps, and **both age gaps, published at every evaluation** and tracked over time (lot 6).
 
 **4. `models/registry.py`.** Register the best run as `crediscore`, and set the alias `champion` (first time) or `challenger`.
 
@@ -362,9 +372,10 @@ Tests:
 **3. `models/promote.py`.** The challenger becomes champion iff **all** of these hold on the same fresh held-out set (T7):
 - `auc_ch ≥ auc_champ`;
 - `auc_ch ≥ 0.75`;
-- the D5 fairness gap ≤ 10 pts, for gender **and** age.
+- **gender (D5)**: the acceptance-rate gap (`ACCEPTE` only) between F and M, `XNA` excluded, is ≤ 10 pts, **and** the equal-opportunity gap is ≤ 10 pts;
+- **age bands (D5)** (<30, 30–50, ≥50): non-regression only, `eo_gap_age_ch ≤ eo_gap_age_champ + 2` pts. No absolute age gate. Both age gaps are logged at every evaluation.
 
-Otherwise nothing changes, and the exit code and log say why. The thresholds come from `params.yaml` (`promotion` key).
+Otherwise nothing changes, and the exit code and log say why. The thresholds come from `params.yaml` (`promotion` key: 10 pts gender, +2 pts age tolerance).
 
 Tests:
 - the 2 roadmap cases;
@@ -447,7 +458,7 @@ These are Claude's work hours, reviews included. Not included: Achraf's decision
 |---|---|
 | Areej's S3 outputs are late | Synthetic frame + local split; the DVC stages are wired when her outputs land |
 | The team misses the S3 checkpoint because no model exists | Walking skeleton at the start of lot 2 |
-| The fairness gate never passes (age) | Measured in lot 1; D5 decided before lot 4 |
+| The fairness gate never passes (age) | Measured in lot 1 (34.5 / 32.9 pts); D5 decided 2026-10-25: absolute gate on gender only, non-regression on age |
 | Recall ≥ 65 % is not reached | Recall constraint in the optimizer; D8 |
 | Brier ≤ 0.07 is not reached | CV calibration; reported honestly (T6) |
 | `poetry.lock` conflicts | One early dependencies PR (T1) |
