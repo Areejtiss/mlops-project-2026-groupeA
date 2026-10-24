@@ -17,7 +17,7 @@
 ## 2. Flavor et objet exact
 
 - Flavor **`mlflow.sklearn`**, chargé par `mlflow.sklearn.load_model(...)`. L'API a besoin de `predict_proba`, et SHAP du pipeline ajusté : le flavor `pyfunc` ne suffit pas.
-- Objet servi (artefact `model/` du run, celui qui est enregistré) : un **`CalibratedClassifierCV(pipeline, cv=5, method="isotonic", ensemble=False)`** ajusté sur la partie train (T2).
+- Objet servi (le modèle enregistré) : un **`CalibratedClassifierCV(pipeline, cv=5, method="isotonic", ensemble=False)`** ajusté sur la partie train (T2).
   - Avec `ensemble=False`, scikit-learn apprend **une seule** fonction isotonique sur les prédictions hors-pli des 5 plis, puis réajuste le pipeline sur **tout le train**.
   - Le modèle servi est donc une fonction **monotone** d'un seul pipeline : `calibrated_classifiers_[0].estimator`. C'est ce pipeline que SHAP explique (section 6).
   - Il n'y a **pas d'artefact séparé** pour le modèle non calibré.
@@ -26,7 +26,7 @@
   2. `model` : le classifieur (LogReg, LightGBM, XGBoost ou RandomForest).
 - Conséquence de l'isotonique : la probabilité servie est **en paliers**. La baseline n'a que 69 valeurs distinctes sur la validation, et beaucoup de dossiers ont exactement la même probabilité.
 - **MLflow 3.17, journalisation et chargement :**
-  - `mlflow.sklearn.log_model(..., serialization_format="cloudpickle")`. Le format `skops` refuse `CalibratedClassifierCV`.
+  - `mlflow.sklearn.log_model(..., serialization_format="cloudpickle")`. Le format `skops` refuse `CalibratedClassifierCV` sans `skops_trusted_types`.
   - Le modèle est toujours adressé par **nom enregistré + alias** (`models:/crediscore@champion`), jamais par `runs:/<run_id>/<artefact>`.
 - **Version de scikit-learn épinglée.** Un pickle scikit-learn n'est fiable qu'avec la même version : ≥ 1.6, actuellement **1.9.1** (`poetry.lock`). L'image Docker de l'API doit installer exactement la version de `poetry.lock`. La version est aussi écrite en tag (`sklearn_version`).
 
