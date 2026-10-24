@@ -75,3 +75,10 @@ def test_input_not_mutated(params: Params, synthetic_frame: pd.DataFrame) -> Non
 def test_missing_target_raises(params: Params, synthetic_frame: pd.DataFrame) -> None:
     with pytest.raises(KeyError):
         split(synthetic_frame.drop(columns=params.target), params)
+
+
+def test_original_index_is_kept(params: Params, synthetic_frame: pd.DataFrame) -> None:
+    df = synthetic_frame.set_axis(synthetic_frame.index + 10_000)
+    fit, val = split(df, params)
+    for part in (fit, val):
+        pd.testing.assert_frame_equal(part, df.loc[part.index])
