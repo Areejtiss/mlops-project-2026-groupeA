@@ -6,7 +6,7 @@
 
 - **Base read:** branch `dev` = `main` = `0de3860` (2026-10-11); `origin/feat/iyed-serving-cicd` = `91e5e1b` (2026-10-24, CI only, not merged).
 - **Owner:** Achraf Gharbi. **Written:** 2026-10-24.
-- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2).
+- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2), age rule anchored to the baseline the same day. Lot 2 implemented 2026-10-25 (see "Lot 2 progress"); `dvc.yaml` train stage deferred until Areej's pipeline exists.
 
 ---
 
@@ -314,6 +314,48 @@ Test: `main()` on synthetic data, in a `tmp_path`, with the MLflow URI `sqlite:/
 - the API serves the skeleton model (with Iyed);
 - two runs (LogReg, LightGBM) are side by side in the MLflow UI, with all metrics and curves;
 - `dvc repro train` works.
+
+**Lot 2 progress (2026-10-25, branch `feature/mlflow-training`):**
+- [x] Params PR for Areej (separate `(for Areej's review)` commits): `data.val_size`, `cost.cost_review`, `threshold.max_review_share`, `threshold.min_recall` with bounds and tests; `threshold.low/high` documented as an optional manual override (D9); `A_ETUDIER` spelling (D4).
+- [x] `data/features.py` for Areej (D2, D10): `add_derived_features`, pure, row-wise, NaN instead of ±inf, `DAYS_EMPLOYED` 365243 → NaN, thin file = `EXT_SOURCE_1` and `_3` missing; 100 % covered.
+- [x] `/models/` git-ignored (root-anchored).
+- [x] 3. `tests/conftest.py`: deterministic 2 000-row synthetic frame (8.7 % positives, NaNs in `EXT_SOURCE_*`, learnable signal).
+- [x] 4. `models/split.py` (D1), 100 %.
+- [x] 5. `models/pipeline.py`: `build_pipeline("logreg" | "lightgbm")` + `calibrate()` (`ensemble=False`), 100 %.
+- [x] 6. `models/threshold.py`: `decide`, `zone_metrics`, `optimize_thresholds` (exact search, midpoint cuts, rule A), 100 %. Quick mutation check on the boundaries: 7/7 killed (review cap `<`, recall `<=`, cost-tie `<=`, last argmin, `NEVER` → 1.0, no midpoint, strict `low < high`).
+- [x] 7. `models/train.py`: `main()`, artifacts, `--sample` (CML: 4–5 s on 5 000 rows), MLflow logging; 98 % (uncovered: no-git fallback, `data_hash` tag line, `__main__`).
+- [x] 1. Walking skeleton: hand-off for Iyed in contract 2 §9 (snippet checked on a raw row). The API side is Iyed's.
+- [x] 2. MLflow service for Iyed (T8): `deploy/mlflow/Dockerfile` (mlflow 3.17.2 + boto3 1.43.117), compose service `mlflow` (SQLite volume, `--artifacts-destination s3://mlflow`, healthcheck), `mlflow` bucket in `minio-init`, `.env.example`.
+- [ ] 8. `dvc.yaml` stage `train`: **deferred**, Areej's `dvc.yaml` and `split` outputs do not exist yet. Until then a throwaway prep script (not committed) builds `data/processed/{train,test}.parquet` like the notebook.
+- [ ] The API serves the skeleton (Iyed). Adversarial review (≥ 30 mutants) and walkthrough.
+- Checks: black, flake8, mypy strict green; **176 tests**, total coverage 94 % (`download.py` 64 % is Areej's, unchanged).
+
+**Measured (real data, 100k stratified sample, 80k train → 64k fit / 16k val, seed 42; validation only, test untouched):**
+
+| | LogReg (baseline) | LightGBM |
+|---|---|---|
+| ROC-AUC / PR-AUC / Brier | 0.7385 / 0.2133 / 0.0689 | **0.7535 / 0.2400 / 0.0678** |
+| Distinct calibrated probabilities | 69 | 63 |
+| Thresholds low / high (midpoints) | 0.08981 / 0.12321 | 0.08559 / 0.13261 |
+| Recall (D8) / review share | 66.2 % / 14.2 % | 67.0 % / 14.4 % |
+| Cost per file (accept all: 0.4037) | 0.3329 | **0.3179** (−4.5 % vs LogReg on val) |
+| MLflow run id | `269f4acf43a646f5b09e74f6dcc3de7f` | `a6cea7a26be8445884bdaf3e2086c288` |
+
+- LogReg reproduces the notebook validation numbers exactly (same split, same cost 0.3329).
+- LightGBM (default-ish parameters, no tuning) is −4.5 % on cost: far from −15 %. Lot 3 (Optuna, XGBoost) has to close the gap, on the test split.
+- Proof: REST API lists both runs FINISHED with the metrics, tags (`threshold_low/high` in full precision, `shap_unit`, `data_hash` = raw md5), curves and JSON artifacts; objects are in MinIO bucket `mlflow`; both logged models reload through MLflow with identical probabilities to the local `model.joblib`.
+
+**Deviations and why:**
+- `optimize_thresholds` returns `low ≤ high`, not strictly `<`: the notebook, contract 2 (`low = high` = 2 zones) and the "accept all" candidate required by the round-2 review all need it. A strict search would also make `max_review_share = 0` infeasible. Infeasibility can then only come from a constraint outside [0, 1].
+- Rule A (coordinator): cuts at the midpoint below the chosen step. `NEVER` (just above 1.0) is not a step and stays as is: halfway between 1.0 and the next float rounds back to 1.0 (found by a test with a proba of exactly 1.0).
+- Found on the real run: parquet and JSON give `None` for missing categoricals, which `SimpleImputer` does not impute (it became a one-hot category). Fixed inside the pipeline (`none_to_nan` step), so the API gets it too; test added.
+- Found on the real run: MLflow prints an emoji, which crashed on a redirected cp1252 Windows stdout (as under `dvc repro`). `main()` now replaces unencodable characters.
+- Host-side `mlflow.sklearn.load_model` hung: the server advertises multipart downloads with presigned URLs for `http://minio:9000`. Host clients set `MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false` (`.env.example`, for Iyed's review).
+- `joblib` added to the mypy untyped list (`pyproject.toml`, shared).
+- LightGBM hyperparameters are fixed in `pipeline.py` until Optuna (lot 3). Both preprocessing branches are identical for both models (scaling is harmless for trees).
+- The thresholds are run tags and logged-model tags (MLflow 3 `LoggedModel`); they become model-version tags at registration (lot 3).
+- `train` does not apply the `params.threshold.low/high` override: it is a serving-time override (contract 2 §5).
+- `docker compose -p mlops-project-2026-groupea up -d --build mlflow` from this worktree recreated the MinIO container (its config hash changed); data is on the named volume and was checked intact (158 MiB in `dvc-store`).
 
 ### Lot 3 — S4: comparison, evaluate, registry (Jalon 2) · branch `feature/model-registry` · ~10 h incl. review
 
