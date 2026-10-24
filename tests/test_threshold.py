@@ -7,6 +7,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from crediscore.models import threshold
 from crediscore.models.cost import ACCEPT, REFUSE, REVIEW, business_cost
 from crediscore.models.threshold import (
     NEVER,
@@ -194,8 +195,54 @@ def test_cuts_are_midpoints_between_steps(seed: int) -> None:
     y, p = tied_case(seed)
     steps = set(np.unique(p).tolist())
     for cut in optimize_thresholds(y, p, **COSTS, **D3):
-        # Never on a step, unless it is the lowest step (nothing below it).
-        assert cut not in steps or cut == min(steps)
+        assert cut not in steps
+
+
+def test_lowest_step_cut_is_halved() -> None:
+    # Reviewer's probe: the cut on the lowest step 0.01 used to stay on it, and
+    # float32(0.01) < 0.01 flipped both 0.01 files from review to accept.
+    y, p = np.array([1, 0, 0, 1]), np.array([0.01, 0.01, 0.9, 0.9])
+    low, high = optimize_thresholds(y, p, **COSTS, min_recall=1.0, max_review_share=0.5)
+    assert low == 0.005
+    ref = decide(p, low, high)
+    assert ref.tolist() == [REVIEW, REVIEW, REFUSE, REFUSE]
+    np.testing.assert_array_equal(decide(p.astype(np.float32), low, high), ref)
+
+
+def test_adjacent_double_steps_keep_the_cut() -> None:
+    # Halfway between two neighbouring doubles rounds onto one of them: the cut
+    # stays on its step rather than moving files across the boundary.
+    a0 = 0.1
+    a1 = float(np.nextafter(a0, 1))
+    y = np.array([0, 0, 1, 1, 0, 1])
+    p = np.array([0.05, a0, a1, a1, 0.9, 0.9])
+    assert (a0 + a1) / 2 == a0  # the midpoint rounds onto the lower step
+    low, high = optimize_thresholds(y, p, **COSTS, min_recall=0.9, max_review_share=0.5)
+    assert low == high == a1
+    d = decide(p, low, high)
+    assert d.tolist() == [ACCEPT, ACCEPT, REFUSE, REFUSE, REFUSE, REFUSE]
+    assert business_cost(y, d, **COSTS) == brute_force(
+        y, p, min_recall=0.9, max_review_share=0.5
+    )
+
+
+def test_guard_against_midpoints_that_change_decisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(threshold, "_midpoint", lambda cut, steps: cut / 10)
+    with pytest.raises(RuntimeError, match="changed decisions"):
+        optimize_thresholds(TOY_Y, TOY_P, **COSTS, **FREE)
+
+
+def test_guard_against_a_cost_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = threshold.zone_metrics
+    monkeypatch.setattr(
+        threshold,
+        "zone_metrics",
+        lambda *a, **k: {**real(*a, **k), "cost": real(*a, **k)["cost"] + 1},
+    )
+    with pytest.raises(RuntimeError, match="business_cost"):
+        optimize_thresholds(TOY_Y, TOY_P, **COSTS, **FREE)
 
 
 @pytest.mark.parametrize("seed", range(8))
@@ -250,9 +297,38 @@ def test_no_positive_raises() -> None:
 
 
 @pytest.mark.parametrize(
-    ("y", "p"),
-    [([0, 1], [0.1]), ([0, 2], [0.1, 0.2]), ([0, 1], [0.1, np.nan]), ([], [])],
+    ("y", "p", "match"),
+    [
+        ([[0, 1]], [[0.1, 0.2]], "1-D"),
+        ([], [], "empty"),
+        ([0, 1], [0.1], "same length"),
+        ([0, 2], [0.1, 0.2], "binary"),
+        ([0, 1], [0.1, np.nan], "NaN"),
+        ([0, 1], [0.1, np.inf], r"in \[0, 1\]"),
+        ([0, 1], [-0.1, 0.5], r"in \[0, 1\]"),
+        ([0, 1], [0.1, 1.5], r"in \[0, 1\]"),
+    ],
 )
-def test_bad_inputs_raise(y: list[float], p: list[float]) -> None:
-    with pytest.raises(ValueError):
+def test_bad_inputs_raise(y: list[float], p: list[float], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
         optimize_thresholds(y, p, **COSTS, **FREE)
+
+
+@pytest.mark.parametrize("p", [[np.inf], [-0.1], [1.5], [-np.inf]])
+def test_decide_rejects_proba_out_of_range(p: list[float]) -> None:
+    with pytest.raises(ValueError, match=r"proba must be in \[0, 1\]"):
+        decide(p, 0.1, 0.3)
+
+
+@pytest.mark.parametrize(
+    ("low", "high"),
+    [(np.nan, 0.3), (0.1, np.nan), (-0.1, 0.3), (0.1, 1.5), (0.1, np.inf)],
+)
+def test_decide_rejects_thresholds_out_of_range(low: float, high: float) -> None:
+    with pytest.raises(ValueError, match=r"low and high must be in \[0, 1\]"):
+        decide([0.5], low, high)
+
+
+def test_decide_accepts_the_never_sentinel_and_the_bounds() -> None:
+    assert decide([0.0, 1.0], 0.0, NEVER).tolist() == [REVIEW, REVIEW]
+    assert decide([0.0, 1.0], 1.0, 1.0).tolist() == [ACCEPT, REFUSE]
