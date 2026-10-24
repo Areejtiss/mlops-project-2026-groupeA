@@ -120,3 +120,35 @@ def test_row_wise_and_index_preserved() -> None:
     pd.testing.assert_frame_equal(
         out.iloc[[0]].reset_index(drop=True), add_derived_features(a)
     )
+
+
+RAW_NUMERIC = [c for c in PARAMS.features.numeric if c not in DERIVED] + [
+    "DAYS_BIRTH",
+    "DAYS_EMPLOYED",
+]
+
+
+def test_negative_over_zero_gives_nan_not_minus_inf() -> None:
+    out = add_derived_features(raw_row(AMT_ANNUITY=-1.0, AMT_INCOME_TOTAL=0.0))
+    assert np.isnan(out["ANNUITY_INCOME_RATIO"].iloc[0])
+
+
+def test_one_row_request_with_every_field_none() -> None:
+    # A JSON request with every field null: one row, object columns of None.
+    df = pd.DataFrame([{col: None for col in raw_row().columns}])
+    out = add_derived_features(df).iloc[0]
+    for col in ["ANNUITY_INCOME_RATIO", "CREDIT_TERM", "AGE_YEARS", "EMPLOYED_YEARS"]:
+        assert np.isnan(out[col]), col
+    assert out["DAYS_EMPLOYED_ANOM"] == 0
+    assert out["EXT_SOURCE_MISSING_COUNT"] == 3
+    assert out["IS_THIN_FILE"] == 1
+
+
+@pytest.mark.parametrize("col", RAW_NUMERIC)
+def test_one_row_request_with_one_numeric_none(col: str) -> None:
+    df = raw_row().astype(object)
+    df[col] = None
+    out = add_derived_features(df)
+    assert out[col].isna().all()
+    derived = out[list(DERIVED)].astype(float)
+    assert np.isfinite(derived.fillna(0)).all().all()
