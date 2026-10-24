@@ -21,9 +21,11 @@ Defaults: --train data/processed/train.parquet, --params params.yaml.
 """
 
 import argparse
+import io
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -346,6 +348,9 @@ def main(argv: list[str] | None = None) -> None:
         help="CML mode: train on this file instead of --train, also write roc.png",
     )
     args = parser.parse_args(argv)
+    # MLflow prints an emoji: a redirected Windows console (cp1252) would crash.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(errors="replace")
 
     params = load_params(args.params)
     df = pd.read_parquet(args.sample or args.train)
