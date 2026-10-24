@@ -1,6 +1,7 @@
 """Tests for the business cost of credit decisions (D3, D4)."""
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from crediscore.models.cost import business_cost
@@ -123,3 +124,31 @@ def test_non_binary_labels_are_rejected(y: object) -> None:
 def test_unknown_decision_is_rejected(decisions: list[object]) -> None:
     with pytest.raises(ValueError, match="decision"):
         business_cost([0, 1], decisions, **COSTS)
+
+
+@pytest.mark.parametrize(
+    "y",
+    [
+        [[0, 1]],  # 2-D labels, 1-D decisions
+        np.array(1),  # scalar labels, 1-D decisions
+    ],
+)
+def test_non_1d_labels_with_1d_decisions_are_rejected(y: object) -> None:
+    with pytest.raises(ValueError, match="1-D arrays expected"):
+        business_cost(y, ["ACCEPTE", "REFUSE"], **COSTS)  # type: ignore[arg-type]
+
+
+def test_decisions_longer_than_labels_are_rejected() -> None:
+    with pytest.raises(ValueError, match="length"):
+        business_cost([0, 1], ["ACCEPTE", "REFUSE", "ACCEPTE"], **COSTS)
+
+
+def test_pandas_object_series_of_codes_is_accepted() -> None:
+    y = pd.Series([1, 0, 1])
+    decisions = pd.Series(["ACCEPTE", "A_ETUDIER", "REFUSE"], dtype=object)
+    assert business_cost(y, decisions, **COSTS) == pytest.approx(5.3)
+
+
+def test_code_with_a_leading_space_is_rejected() -> None:
+    with pytest.raises(ValueError, match="decision"):
+        business_cost([0, 1], [" ACCEPTE", "REFUSE"], **COSTS)
