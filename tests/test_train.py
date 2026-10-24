@@ -1,7 +1,9 @@
 """End-to-end tests of the training entry point on the synthetic frame (T4)."""
 
 import hashlib
+import io
 import json
+import sys
 from pathlib import Path
 
 import joblib
@@ -173,3 +175,27 @@ def test_read_dvc_md5(tmp_path: Path) -> None:
 def test_unknown_model_is_rejected(train_file: Path) -> None:
     with pytest.raises(SystemExit):
         main(["--train", str(train_file), "--model", "svm"])
+
+
+def test_main_survives_a_cp1252_console(
+    tmp_path: Path, train_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # MLflow prints an emoji; a redirected Windows stdout is cp1252 (b4c696a).
+    console = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", console)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    main(
+        [
+            "--params",
+            str(PARAMS_FILE),
+            "--sample",
+            str(train_file),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    print("\U0001f3c3 View run")  # what mlflow writes after each run
+    console.flush()
+    written = console.buffer.getvalue()  # type: ignore[attr-defined]
+    assert b"? View run" in written
