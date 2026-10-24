@@ -6,7 +6,7 @@
 
 - **Base read:** branch `dev` = `main` = `0de3860` (2026-10-11); `origin/feat/iyed-serving-cicd` = `91e5e1b` (2026-10-24, CI only, not merged).
 - **Owner:** Achraf Gharbi. **Written:** 2026-10-24.
-- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 in progress.
+- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); awaiting adversarial review, team approval of contracts 2/3, and a new D5 decision (equal opportunity does not close the age gap).
 
 ---
 
@@ -213,6 +213,37 @@ Also write in the notebook why the cost ratio is 5:1 (roadmap requirement).
 - the reference AUC and baseline cost are written in the notebook (the cost −15 % KPI is measured against this baseline);
 - `cost.py` is 100 % covered;
 - contracts 2 and 3 are approved by the team (their approval, not ours).
+
+**Lot 1 progress (2026-10-24):**
+- [x] 0. Dependencies (T1), one commit: scikit-learn 1.9.1, mlflow 3.17.2, lightgbm 4.7.0, xgboost 3.2.0, shap 0.51.0, optuna 5.0.0, scipy 1.17.1, matplotlib 3.11.2, boto3 1.43.117, **evidently pinned 0.7.23** (latest stable); jupyter, nbconvert, ipykernel in dev.
+- [x] 1. `notebooks/01_eda.ipynb` + 5 figures in `reports/figures/eda_*.png`.
+- [x] 2. `models/cost.py` in TDD, 18 tests, 100 % covered, mypy strict clean. The 5:1 rationale is written in `02_baseline.ipynb`.
+- [x] 3. `notebooks/02_baseline.ipynb` + 3 figures + `reports/baseline_metrics.json`.
+- [x] 4. `docs/contracts/02-model-artifact.md`, with the contract 3 proposal (decision + `top_factors`).
+- [ ] Contracts 2 and 3 approved by Areej and Iyed (sent for review by the human).
+- [ ] Adversarial review (≥ 30 mutants) and 10-minute walkthrough.
+
+**Measured (baseline LogReg, stratified 100k sample, split 64k/16k/20k, seed 42):**
+
+| | Validation | Test |
+|---|---|---|
+| ROC-AUC (calibrated) | 0.739 | **0.746** |
+| PR-AUC (calibrated) | 0.222 | 0.228 |
+| Brier uncalibrated / calibrated | 0.206 / 0.069 | 0.203 / **0.069** |
+| Single cost-optimal cut-off 0.170: recall, cost per file | 35.2 %, 0.346 | 35.2 %, 0.343 |
+| 3 zones D3 (0.087 / 0.129): recall, review share, cost per file | 65.3 %, 14.9 %, 0.329 | 66.0 %, 14.9 %, **0.321** (total 6 418.3) |
+| 3 zones unconstrained (0.058 / 0.714): review share | 49.8 % | 48.9 % |
+
+- Baseline cost reference for the −15 % KPI: **0.321 per file on test** (target ≤ 0.273 with the same constraints).
+- D3 confirmed: without a cap, half of the files go to review. D8: a single cut-off gives only 35 % recall (not ~50 % as estimated in D8); with recall ≥ 65 % it costs more than accepting everyone (0.409 vs 0.404). 3 zones fix this.
+- **D5 answer: yes.** Test, D3 thresholds, "accepted" = `ACCEPTE` only (D8): age gap **34.0 pts raw, 32.6 pts equal opportunity**; gender 7.8 / 6.6 pts. With the single cut-off: age 19.9 / 16.9, gender 5.4 / 4.0. **Option b (equal opportunity) does not bring the age gap under 10 pts**, so the D5 rule as decided would block every promotion. New decision needed before lot 4 (human + team; tell the teacher).
+- No `XNA` row in the test split (4 in the whole dataset).
+
+**Deviations and why:**
+- T1: mypy overrides cover scikit-learn, shap, scipy, boto3 and evidently (checked with mypy). mlflow, lightgbm, xgboost, optuna and matplotlib ship type hints, so they get no override. Version ranges allow Python 3.11 (scipy ≥ 1.18 and the newest shap need 3.12).
+- The baseline uses the `params.data.sample_size` (100k) stratified sample, like the future featurize stage, not the full 307k rows.
+- `VAL_SIZE`, `COST_REVIEW`, `MAX_REVIEW_SHARE`, `MIN_RECALL` are notebook constants, **pending Areej's params PR**. The derived features use a local stand-in for Areej's `add_derived_features` (D2).
+- `business_cost` takes all three costs as required keyword arguments (no default `cost_review`), so a 3-zone call can never silently count review as free.
 
 ### Lot 2 — S3: walking skeleton, then traced training · branch `feature/mlflow-training` · ~12 h incl. 2 review rounds
 
