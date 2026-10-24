@@ -121,6 +121,43 @@ LogReg calibrée (`ensemble=False`), sur le test :
 
 Ce chiffre n'est la référence du KPI −15 % que sur ce jeu de test : au lot 3, `evaluate` recalcule la baseline sur le split de test définitif et compare les modèles à ce recalcul.
 
+## 9. Passation à Iyed : squelette « marchant » (lot 2)
+
+En attendant le Registry (lot 3), l'API peut servir le modèle produit par `train` à partir de deux fichiers locaux. Ce sont les sorties DVC de `train`, non versionnées dans git :
+
+```
+poetry run python -m crediscore.models.train --model logreg     # -> models/model.joblib, models/thresholds.json, models/metrics.json
+```
+
+**Chemin de service (D2), dans cet ordre :** données brutes de la requête → `add_derived_features` → modèle → `decide`.
+
+```python
+import json
+
+import joblib
+import pandas as pd
+
+from crediscore.config import load_params
+from crediscore.data.features import add_derived_features
+from crediscore.models.threshold import decide
+
+params = load_params()
+model = joblib.load("models/model.joblib")              # CalibratedClassifierCV
+th = json.loads(open("models/thresholds.json", encoding="utf-8").read())
+
+raw = pd.DataFrame([request_fields])                     # champs bruts validés par Pydantic, None si absent
+X = add_derived_features(raw)[params.features.all]
+X[params.features.numeric] = X[params.features.numeric].astype("float64")
+proba = model.predict_proba(X)[:, 1]                     # float64, NON arrondie
+decision = decide(proba, th["low"], th["high"])[0]       # "ACCEPTE" / "A_ETUDIER" / "REFUSE"
+response = {"proba": round(float(proba[0]), 4), "decision": str(decision)}   # arrondi APRÈS la décision
+```
+
+- **Entrée brute attendue par `add_derived_features`** : les 23 colonnes brutes de `params.features.numeric`, plus `DAYS_BIRTH` et `DAYS_EMPLOYED` (à la place des 8 dérivées), plus les 10 catégorielles. Le modèle ignore toute autre colonne (`CODE_GENDER`, `SK_ID_CURR`…).
+- `low` et `high` sont lus tels quels (float64), jamais arrondis. Si `params.threshold.low/high` est renseigné (forçage manuel, D9), l'API l'utilise à la place et le journalise.
+- L'image de l'API doit installer `crediscore` (pour `add_derived_features`, `decide`, et la fonction `none_to_nan` référencée par le pickle) et exactement la version de scikit-learn de `poetry.lock`.
+- Au lot 3, `joblib.load` sera remplacé par `mlflow.sklearn.load_model("models:/crediscore@champion")`, et les seuils seront lus dans les tags de la version (`threshold_low`, `threshold_high`, `shap_unit`). Depuis la machine hôte, définir `MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false` (voir `.env.example`). Ce n'est pas nécessaire dans un conteneur du réseau compose.
+
 ---
 
 ## Proposition pour le contrat 3 (à valider par Iyed)
