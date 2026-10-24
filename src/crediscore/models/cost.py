@@ -1,4 +1,4 @@
-﻿"""Business cost of credit decisions, for 2 or 3 decision zones (D3, D4).
+"""Business cost of credit decisions, for 2 or 3 decision zones (D3, D4).
 
 A missed default (FN: TARGET=1 accepted) costs `cost_fn`, a good client refused
 (FP: TARGET=0 refused) costs `cost_fp`, and every file sent to manual review
@@ -31,9 +31,12 @@ def business_cost(
     """Total business cost of a set of decisions.
 
     Args:
-        y_true: True labels, 0 (repaid) or 1 (default).
-        decisions: One decision per file: a D4 code ("ACCEPTE", "A_ETUDIER",
-            "REFUSE"), or a binary prediction (1 = default = REFUSE, 0 = ACCEPTE).
+        y_true: True labels, 0 (repaid) or 1 (default). 1-D.
+        decisions: One decision per file, 1-D: a D4 code ("ACCEPTE",
+            "A_ETUDIER", "REFUSE", exact spelling), or a binary prediction as
+            int, bool or float (1 / True = default = REFUSE, 0 = ACCEPTE).
+            Both inputs are matched by position: pandas Series indexes are
+            ignored, not aligned.
         cost_fn: Cost of one accepted default.
         cost_fp: Cost of one refused good client.
         cost_review: Cost of one file sent to manual review.
@@ -42,16 +45,18 @@ def business_cost(
         The summed cost (0.0 for empty inputs).
 
     Raises:
-        ValueError: If lengths differ, a label is not 0/1, or a decision is
-            not a known code or binary value.
+        ValueError: If an input is not 1-D, lengths differ, a label is not
+            0/1, or a decision is not a known code or binary value.
     """
     y = np.asarray(y_true)
     d = np.asarray(decisions)
-    if y.shape != d.shape or y.ndim != 1:
+    if y.ndim != 1 or d.ndim != 1:
+        raise ValueError(f"1-D arrays expected, got shapes {y.shape} and {d.shape}")
+    if y.shape != d.shape:
         raise ValueError(f"y_true and decisions length differ: {y.shape} vs {d.shape}")
     if y.dtype.kind not in "biuf" or not np.isin(y, (0, 1)).all():
         raise ValueError("y_true must be binary (0/1)")
-    if d.dtype.kind in "biu":
+    if d.dtype.kind in "biuf":
         if not np.isin(d, (0, 1)).all():
             raise ValueError("binary decisions must be 0 or 1")
         d = np.where(d == 1, REFUSE, ACCEPT)
