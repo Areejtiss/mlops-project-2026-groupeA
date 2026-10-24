@@ -22,7 +22,7 @@
   - Le modèle servi est donc une fonction **monotone** d'un seul pipeline : `calibrated_classifiers_[0].estimator`. C'est ce pipeline que SHAP explique (section 6).
   - Il n'y a **pas d'artefact séparé** pour le modèle non calibré.
 - `pipeline` est un `sklearn.pipeline.Pipeline` en deux étapes :
-  1. `pre` : un `ColumnTransformer`. Colonnes numériques : imputation médiane + `StandardScaler` (étape optionnelle pour les modèles à arbres). Colonnes catégorielles : imputation par la modalité la plus fréquente + `OneHotEncoder(handle_unknown="ignore")`. `remainder="drop"`.
+  1. `pre` : un `ColumnTransformer`. Colonnes numériques : imputation médiane + `StandardScaler` (étape optionnelle pour les modèles à arbres). Colonnes catégorielles : `None` converti en `NaN` (un `null` JSON ou parquet est donc imputé comme un `NaN`, et ne devient pas une modalité), imputation par la modalité la plus fréquente + `OneHotEncoder(handle_unknown="ignore")`. `remainder="drop"`.
   2. `model` : le classifieur (LogReg, LightGBM, XGBoost ou RandomForest).
 - Conséquence de l'isotonique : la probabilité servie est **en paliers**. La baseline n'a que 69 valeurs distinctes sur la validation, et beaucoup de dossiers ont exactement la même probabilité.
 - **MLflow 3.17, journalisation et chargement :**
@@ -34,7 +34,7 @@
 
 - **Exactement les colonnes `params.features.all`** (D2 option b), dans cet ordre : les 31 numériques puis les 10 catégorielles de `params.yaml`.
 - Les 8 features dérivées (`ANNUITY_INCOME_RATIO`, `CREDIT_INCOME_RATIO`, `CREDIT_TERM`, `AGE_YEARS`, `EMPLOYED_YEARS`, `DAYS_EMPLOYED_ANOM`, `EXT_SOURCE_MISSING_COUNT`, `IS_THIN_FILE`) **ne sont pas calculées par l'artefact**. Elles sont produites par la fonction partagée `add_derived_features(df)` d'Areej. Cette fonction est appelée par l'étape `featurize` **et** par l'API avant le modèle. Un test vérifie que les deux chemins donnent des colonnes identiques.
-- Types (signature MLflow, `infer_signature` sur un échantillon du train) :
+- Types (signature MLflow, construite explicitement par `crediscore.models.train.build_signature`, pas inférée) :
 
 | Colonnes | Type | Manquant autorisé |
 |---|---|---|
@@ -60,8 +60,8 @@
 
 ```json
 {
-  "low": 0.0926,
-  "high": 0.1378,
+  "low": 0.0898,
+  "high": 0.1232,
   "cost_fn": 5.0,
   "cost_fp": 1.0,
   "cost_review": 0.3,
@@ -74,8 +74,10 @@
 ```
 
   Les valeurs ci-dessus sont celles de la baseline LogReg (`reports/baseline_metrics.json`), arrondies pour la lecture.
-- **Dans le vrai fichier, `low` et `high` sont écrits en pleine précision (float64, jamais arrondis).** Avec l'isotonique, chaque seuil est égal à un palier de probabilité. L'arrondir déplacerait tout un palier de dossiers d'une zone à l'autre.
-- Les seuils sont cherchés **exactement** sur toutes les probabilités distinctes de la validation, pas sur une grille.
+- **Dans le vrai fichier, `low` et `high` sont écrits en pleine précision (float64, jamais arrondis).**
+- Les seuils sont cherchés **exactement** sur toutes les probabilités distinctes de la validation, pas sur une grille (`crediscore.models.threshold.optimize_thresholds`, qui rend toujours `low ≤ high`).
+- **Règle du milieu.** Avec l'isotonique, une coupure posée exactement sur un palier ferait dépendre la décision d'une égalité de flottants : sur le test de la baseline, 1 350 dossiers ont `proba == low`, un arrondi à 4 décimales fait passer l'étude à 17,4 % et une proba en float32 fait tomber le recall à 58,9 %. Chaque seuil retenu est donc placé **au milieu entre son palier et le palier distinct immédiatement inférieur** (le palier lui-même s'il n'y en a pas). Les décisions sur la validation sont identiques (vérifié dans le code), et un aller-retour JSON ou une proba en float32 ne les change plus (testé).
+- **La décision est calculée sur la proba float64 non arrondie**, avant tout arrondi de la réponse de l'API.
 - Règle (D4), bornes incluses comme indiqué :
   - `proba < low` → `ACCEPTE` ;
   - `low ≤ proba < high` → `A_ETUDIER` ;
@@ -114,7 +116,7 @@
 
 LogReg calibrée (`ensemble=False`), sur le test :
 - ROC-AUC 0,746 ; PR-AUC 0,220 ; Brier 0,069 ;
-- seuils 3 zones 0,0926 / 0,1378 ; recall 66,5 % ; 14,2 % en étude ;
+- seuils 3 zones 0,0898 / 0,1232 (milieux entre paliers ; paliers 0,0926 / 0,1378) ; recall 66,5 % ; 14,2 % en étude ;
 - coût **0,325 par dossier**.
 
 Ce chiffre n'est la référence du KPI −15 % que sur ce jeu de test : au lot 3, `evaluate` recalcule la baseline sur le split de test définitif et compare les modèles à ce recalcul.
@@ -142,7 +144,7 @@ Réponse de `/predict` :
 
 | Champ | Type | Sens et unité |
 |---|---|---|
-| `proba` | `float` dans [0, 1] | probabilité **calibrée** de défaut (section 4) |
+| `proba` | `float` dans [0, 1] | probabilité **calibrée** de défaut (section 4). `decision` est calculée sur la proba float64 **avant** tout arrondi de ce champ |
 | `decision` | `Literal["ACCEPTE", "A_ETUDIER", "REFUSE"]` | codes D4, sans accents ni espaces. Libellés accentués (« Accepté », « À étudier », « Refusé ») dans l'interface et le rapport seulement |
 | `top_factors` | liste d'**exactement 3** objets `{feature, value, contribution}`, triés par \|contribution\| décroissante | voir section 6 |
 | `top_factors[].feature` | `str` | nom d'une colonne de `params.features.all` (colonne d'origine, jamais un nom one-hot) |
