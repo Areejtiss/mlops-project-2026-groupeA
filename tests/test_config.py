@@ -92,8 +92,15 @@ def test_unknown_key_is_rejected(tmp_path: Path) -> None:
 
 def test_thresholds_must_be_ordered(tmp_path: Path) -> None:
     path = write_params(tmp_path, {"threshold": {"low": 0.6, "high": 0.3}})
-    with pytest.raises(ValidationError, match="low must be smaller"):
+    with pytest.raises(ValidationError, match="low must be <= "):
         load_params(path)
+
+
+def test_equal_thresholds_are_allowed(tmp_path: Path) -> None:
+    # low == high = 2 zones, no review (contract 2 section 5).
+    path = write_params(tmp_path, {"threshold": {"low": 0.2, "high": 0.2}})
+    params = load_params(path)
+    assert params.threshold.low == params.threshold.high == 0.2
 
 
 def test_ci_sample_must_be_smaller_than_sample(tmp_path: Path) -> None:
