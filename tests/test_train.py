@@ -199,3 +199,13 @@ def test_main_survives_a_cp1252_console(
     console.flush()
     written = console.buffer.getvalue()  # type: ignore[attr-defined]
     assert b"? View run" in written
+
+
+def test_git_sha_inside_and_outside_a_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sha = train_module._git_sha()
+    assert sha is not None and len(sha) == 40
+    monkeypatch.chdir(tmp_path.anchor)  # drive root: not a git repository
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", tmp_path.anchor)
+    assert train_module._git_sha() is None
