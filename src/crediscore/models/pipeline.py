@@ -16,13 +16,24 @@ Usage:
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
+import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline, make_pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
+
+
+def none_to_nan(X: Any) -> pd.DataFrame:
+    """Turn None (parquet, JSON null) into NaN, which SimpleImputer imputes.
+
+    Module-level (not a lambda) so that the fitted pipeline pickles.
+    """
+    df = pd.DataFrame(X).astype(object)
+    return df.where(df.notna(), np.nan)
 
 
 def _logreg(seed: int) -> Any:
@@ -76,6 +87,7 @@ def build_pipeline(
             (
                 "cat",
                 make_pipeline(
+                    FunctionTransformer(none_to_nan, feature_names_out="one-to-one"),
                     SimpleImputer(strategy="most_frequent"),
                     OneHotEncoder(handle_unknown="ignore"),
                 ),
