@@ -90,15 +90,22 @@ def test_length_mismatch_is_rejected() -> None:
 
 
 @pytest.mark.parametrize(
-    ("y", "decisions"), [([[0, 1]], [["ACCEPTE", "REFUSE"]]), (1, "ACCEPTE")]
+    ("y", "decisions"),
+    [
+        ([[0, 1]], [["ACCEPTE", "REFUSE"]]),
+        (1, "ACCEPTE"),
+        ([0, 1], [["ACCEPTE"], ["REFUSE"]]),
+    ],
 )
 def test_non_1d_input_is_rejected(y: object, decisions: object) -> None:
     with pytest.raises(ValueError, match="1-D arrays expected"):
         business_cost(y, decisions, **COSTS)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("y", [[0, 2], [0, -1], [0.5, 1], ["0", "1"]])
-def test_non_binary_labels_are_rejected(y: list[object]) -> None:
+@pytest.mark.parametrize(
+    "y", [[0, 2], [0, -1], [0.5, 1], ["0", "1"], np.array([0, 1], dtype=object)]
+)
+def test_non_binary_labels_are_rejected(y: object) -> None:
     with pytest.raises(ValueError, match="binary"):
         business_cost(y, ["ACCEPTE", "ACCEPTE"], **COSTS)
 
