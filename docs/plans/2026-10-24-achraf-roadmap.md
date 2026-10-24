@@ -226,7 +226,7 @@ Also write in the notebook why the cost ratio is 5:1 (roadmap requirement).
 **Lot 1 progress (2026-10-24):**
 - [x] 0. Dependencies (T1), one commit: scikit-learn 1.9.1, mlflow 3.17.2, lightgbm 4.7.0, xgboost 3.2.0, shap 0.51.0, optuna 5.0.0, scipy 1.17.1, matplotlib 3.11.2, boto3 1.43.117, **evidently pinned 0.7.23** (latest stable); jupyter, nbconvert, ipykernel in dev.
 - [x] 1. `notebooks/01_eda.ipynb` + 5 figures in `reports/figures/eda_*.png`.
-- [x] 2. `models/cost.py` in TDD, 25 tests, 100 % covered, mypy strict clean. The 5:1 rationale is written in `02_baseline.ipynb`.
+- [x] 2. `models/cost.py` in TDD, 27 tests, 100 % covered, mypy strict clean. Reviewer's mutation campaign (43 mutants): 39 killed, 4 equivalent survivors (`d == 1` vs `d != 0` / `d >= 1`, `y == 0` vs `y != 1`, `y == 1` vs `y > 0`, all equal once values are checked to be 0/1). The 5:1 rationale is written in `02_baseline.ipynb`.
 - [x] Review corrections (2026-10-25): asymmetric binary tests, 1-D error, float/bool decisions, BOM; `ensemble=False`; exact threshold search; contract 2 per coordinator D1–D3; `≥50` label. From now on the failing test is committed before the code (`test(...)` then `feat/fix(...)`).
 - [x] 3. `notebooks/02_baseline.ipynb` + 3 figures + `reports/baseline_metrics.json`.
 - [x] 4. `docs/contracts/02-model-artifact.md`, with the contract 3 proposal (decision + `top_factors`).
