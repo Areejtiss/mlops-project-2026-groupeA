@@ -59,7 +59,7 @@ Contract 2 must state:
 
 ## 2. Decisions — recommendation first
 
-> **Decided 2026-10-24 (Achraf):** the recommended option is adopted for D1, D2, D3, D4, D5, D6, D8, D9, D10. D3 values: `cost_review = 0.3`, `max_review_share = 0.15`; D8 adds `min_recall = 0.65`. Team-facing summary and actions per member: `docs/decisions/2026-10-24-decisions-modelisation.md` (to paste in the PR description). Decisions marked "Team" stay open to objection from Areej and Iyed until the PR is approved.
+> **Decided 2026-10-24 (Achraf):** the recommended option is adopted for D1, D2, D3, D4, D6, D8, D9, D10. D3 values: `cost_review = 0.3`, `max_review_share = 0.15`; D8 adds `min_recall = 0.65`. Team-facing summary and actions per member: `docs/decisions/2026-10-24-decisions-modelisation.md` (to paste in the PR description). Decisions marked "Team" stay open to objection from Areej and Iyed until the PR is approved.
 > **D5 decided 2026-10-25 (human), replacing "a then b":**
 > - **Gender: absolute gate.** The acceptance-rate gap (`ACCEPTE` only) between F and M, `XNA` excluded, must be ≤ 10 pts, and the equal-opportunity gap must also be ≤ 10 pts. Baseline: 7.8 / 6.6 pts.
 > - **Age bands (<30, 30–50, ≥50): no absolute gate.** Non-regression rule: the challenger's age equal-opportunity gap ≤ the champion's + 2 pts. Both age gaps are published at every evaluation and tracked over time (lot 6).
