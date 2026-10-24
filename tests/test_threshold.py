@@ -120,9 +120,10 @@ def test_review_cap_is_inclusive() -> None:
     assert business_cost(TOY_Y, d, **COSTS) == pytest.approx(1.0)  # refuse the step
 
 
-# Unconstrained, accepting the 0.1 default (5) beats reviewing 5 files.
-REC_Y = [0, 0, 1, 0, 0, 0, 1]
-REC_P = [0.05, 0.1, 0.1, 0.1, 0.1, 0.1, 0.9]
+# Unconstrained, accepting the 0.1 step (1 default: 5) beats reviewing its
+# 20 files (6) or refusing its 19 good clients (19).
+REC_Y = [0] + [1] + [0] * 19 + [1]
+REC_P = [0.05] + [0.1] * 20 + [0.9]
 
 
 def test_recall_constraint_forces_a_lower_low() -> None:
@@ -142,21 +143,32 @@ def test_recall_constraint_is_inclusive() -> None:
     assert at == free
 
 
-def test_cost_ties_keep_the_first_optimum() -> None:
-    # (review 0.1, refuse 0.9) and (accept 0.1, review 0.9) both cost 0.3:
-    # the lowest low wins, deterministically.
-    low, high = optimize_thresholds([0, 1], [0.1, 0.9], **COSTS, **FREE)
-    assert (low, high) == pytest.approx((0.1, 0.5))
-    assert decide([0.1, 0.9], low, high).tolist() == [REVIEW, REFUSE]
+# Exactly representable review cost, so that tied costs are equal floats.
+QUARTER = {**COSTS, "cost_review": 0.25}
 
 
-def test_accept_all_is_a_candidate() -> None:
+def test_cost_ties_keep_the_lowest_high() -> None:
+    # 4 files on one step, 1 good client: refuse (1) == review (4 * 0.25).
+    y, p = [1, 1, 1, 0], [0.5] * 4
+    low, high = optimize_thresholds(y, p, **QUARTER, **FREE)
+    assert set(decide(p, low, high).tolist()) == {REFUSE}
+
+
+def test_cost_ties_keep_the_lowest_low() -> None:
+    # 20 files on one step, 1 default: review (20 * 0.25) == accept (5).
+    y, p = [1] + [0] * 19, [0.5] * 20
+    low, high = optimize_thresholds(y, p, **QUARTER, **FREE)
+    assert set(decide(p, low, high).tolist()) == {REVIEW}
+
+
+@pytest.mark.parametrize("step", [0.5, 1.0])  # isotonic can output exactly 1.0
+def test_accept_all_is_a_candidate(step: float) -> None:
     # One default tied with 20 good clients: accepting all (5) beats
     # reviewing all (6.3) or refusing all (20).
-    y, p = [1] + [0] * 20, [0.5] * 21
+    y, p = [1] + [0] * 20, [step] * 21
     low, high = optimize_thresholds(y, p, **COSTS, **FREE)
     assert set(decide(p, low, high).tolist()) == {ACCEPT}
-    assert low == high > 0.5
+    assert low == high > step
 
 
 @pytest.mark.parametrize("seed", range(8))
