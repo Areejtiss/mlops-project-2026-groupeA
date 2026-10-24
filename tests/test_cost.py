@@ -49,6 +49,26 @@ def test_binary_predictions_mean_refuse_when_one() -> None:
     assert business_cost([1, 0, 1, 0], [0, 1, 1, 0], **COSTS) == 6.0
 
 
+def test_binary_zero_on_a_default_is_a_false_negative() -> None:
+    assert business_cost([1], [0], **COSTS) == 5.0
+
+
+def test_binary_one_on_a_good_client_is_a_false_positive() -> None:
+    assert business_cost([0], [1], **COSTS) == 1.0
+
+
+def test_bool_decisions_mean_refuse_when_true() -> None:
+    # e.g. decisions = proba >= threshold
+    assert business_cost([1, 0], [False, True], **COSTS) == 6.0
+
+
+def test_float_binary_decisions_match_int_ones() -> None:
+    y = [1, 0, 1, 0]
+    assert business_cost(y, [0.0, 1.0, 1.0, 0.0], **COSTS) == business_cost(
+        y, [0, 1, 1, 0], **COSTS
+    )
+
+
 def test_costs_are_taken_from_arguments() -> None:
     cost = business_cost(
         [1, 0, 0],
@@ -69,9 +89,12 @@ def test_length_mismatch_is_rejected() -> None:
         business_cost([0, 1], ["ACCEPTE"], **COSTS)
 
 
-def test_two_dimensional_input_is_rejected() -> None:
-    with pytest.raises(ValueError, match="length"):
-        business_cost([[0, 1]], [["ACCEPTE", "REFUSE"]], **COSTS)
+@pytest.mark.parametrize(
+    ("y", "decisions"), [([[0, 1]], [["ACCEPTE", "REFUSE"]]), (1, "ACCEPTE")]
+)
+def test_non_1d_input_is_rejected(y: object, decisions: object) -> None:
+    with pytest.raises(ValueError, match="1-D arrays expected"):
+        business_cost(y, decisions, **COSTS)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("y", [[0, 2], [0, -1], [0.5, 1], ["0", "1"]])
@@ -81,7 +104,14 @@ def test_non_binary_labels_are_rejected(y: list[object]) -> None:
 
 
 @pytest.mark.parametrize(
-    "decisions", [["ACCEPTE", "ACCEPTÉ"], ["ACCEPTE", "A ETUDIER"], [0, 2]]
+    "decisions",
+    [
+        ["ACCEPTE", "ACCEPTÉ"],
+        ["ACCEPTE", "A ETUDIER"],
+        ["accepte", "refuse"],
+        [0, 2],
+        [0.2, 0.9],
+    ],
 )
 def test_unknown_decision_is_rejected(decisions: list[object]) -> None:
     with pytest.raises(ValueError, match="decision"):
