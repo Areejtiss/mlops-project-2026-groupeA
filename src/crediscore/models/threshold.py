@@ -42,14 +42,26 @@ def decide(proba: npt.ArrayLike, low: float, high: float) -> npt.NDArray[np.str_
         One code per probability.
 
     Raises:
-        ValueError: If low > high or a probability is NaN.
+        ValueError: If a probability is NaN or outside [0, 1], a threshold is
+            outside [0, 1] (`NEVER` allowed), or low > high.
     """
-    p = np.asarray(proba, dtype=float)
+    p = _check_proba(proba)
+    for cut in (low, high):
+        if not (0.0 <= cut <= 1.0 or cut == NEVER):  # also False for NaN
+            raise ValueError(f"low and high must be in [0, 1] or NEVER: {low}, {high}")
     if low > high:
         raise ValueError(f"low must be <= high, got {low} > {high}")
+    return np.where(p < low, ACCEPT, np.where(p < high, REVIEW, REFUSE))
+
+
+def _check_proba(proba: npt.ArrayLike) -> npt.NDArray[np.float64]:
+    """Probabilities as float64, rejecting NaN and values outside [0, 1]."""
+    p = np.asarray(proba, dtype=float)
     if np.isnan(p).any():
         raise ValueError("proba contains NaN")
-    return np.where(p < low, ACCEPT, np.where(p < high, REVIEW, REFUSE))
+    if ((p < 0) | (p > 1)).any():  # inf included
+        raise ValueError("proba must be in [0, 1]")
+    return p
 
 
 def zone_metrics(
@@ -93,15 +105,19 @@ def zone_metrics(
 
 
 def _midpoint(cut: float, steps: npt.NDArray[np.float64]) -> float:
-    """Midpoint between `cut` and the next lower step (`cut` if none).
+    """Midpoint between `cut` and the next lower step (`cut / 2` if none).
 
-    `NEVER` is not a step and is kept: halfway between 1.0 and the next float
-    would round back to 1.0.
+    `NEVER` is not a step and is kept. When `cut` and the lower step are
+    neighbouring doubles, the midpoint rounds onto one of them; the cut is
+    then kept, since moving onto the lower step would change decisions.
     """
-    lower = steps[steps < cut]
-    if cut == NEVER or lower.size == 0:
+    if cut == NEVER:
         return cut
-    return float((cut + lower[-1]) / 2)
+    lower = steps[steps < cut]
+    if lower.size == 0:
+        return cut / 2
+    mid = float((cut + lower[-1]) / 2)
+    return cut if mid <= lower[-1] else mid
 
 
 def optimize_thresholds(
@@ -133,19 +149,23 @@ def optimize_thresholds(
         (low, high), full float64 precision, each at a midpoint between steps.
 
     Raises:
-        ValueError: On empty, non-1-D, mismatched, non-binary or NaN inputs,
+        ValueError: On empty, non-1-D, mismatched, non-binary, NaN or
+            out-of-[0, 1] inputs,
             no default in `y_true`, or no pair satisfying the constraints.
     """
     y = np.asarray(y_true)
     p = np.asarray(proba, dtype=float)
-    if y.ndim != 1 or y.shape != p.shape or y.size == 0:
+    if y.ndim != 1 or p.ndim != 1:
+        raise ValueError(f"1-D inputs expected, got shapes {y.shape} and {p.shape}")
+    if y.size == 0:
+        raise ValueError("empty inputs")
+    if y.shape != p.shape:
         raise ValueError(
-            f"non-empty 1-D inputs of equal length expected: {y.shape}, {p.shape}"
+            f"y_true and proba must have the same length: {y.shape}, {p.shape}"
         )
     if not np.isin(y, (0, 1)).all():
         raise ValueError("y_true must be binary (0/1)")
-    if np.isnan(p).any():
-        raise ValueError("proba contains NaN")
+    p = _check_proba(p)
     n, n_pos = y.size, int(y.sum())
     if n_pos == 0:
         raise ValueError("y_true needs at least one default to measure recall")
@@ -174,10 +194,10 @@ def optimize_thresholds(
         )
     low, high = _midpoint(best[0], steps), _midpoint(best[1], steps)
     # Internal cross-checks: same decisions as the step cuts, same cost as cost.py.
-    if not np.array_equal(decide(p, *best), decide(p, low, high)):  # pragma: no cover
+    if not np.array_equal(decide(p, *best), decide(p, low, high)):
         raise RuntimeError("midpoint cuts changed decisions on the search data")
     costs = {"cost_fn": cost_fn, "cost_fp": cost_fp, "cost_review": cost_review}
     check = zone_metrics(y, p, low, high, **costs)["cost"]
-    if not np.isclose(check, best_cost):  # pragma: no cover
+    if not np.isclose(check, best_cost):
         raise RuntimeError(f"count-based cost {best_cost} != business_cost {check}")
     return low, high

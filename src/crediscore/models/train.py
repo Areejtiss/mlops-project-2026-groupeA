@@ -57,6 +57,7 @@ from crediscore.models.cost import DECISIONS  # noqa: E402
 from crediscore.models.pipeline import MODELS, build_pipeline, calibrate  # noqa: E402
 from crediscore.models.split import split_validation  # noqa: E402
 from crediscore.models.threshold import (  # noqa: E402
+    NEVER,
     decide,
     optimize_thresholds,
     zone_metrics,
@@ -315,7 +316,7 @@ def train(df: pd.DataFrame, name: str, params: Params) -> dict[str, Any]:
         **zone_metrics(y_val, proba, low, high, **costs),
         "distinct_proba": float(np.unique(proba).size),
     }
-    accept_all = zone_metrics(y_val, proba, 2.0, 2.0, **costs)["cost_per_file"]
+    accept_all = zone_metrics(y_val, proba, NEVER, NEVER, **costs)["cost_per_file"]
     metrics = {
         "model": name,
         "n_fit": len(fit),
