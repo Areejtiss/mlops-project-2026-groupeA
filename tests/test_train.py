@@ -1,5 +1,6 @@
 """End-to-end tests of the training entry point on the synthetic frame (T4)."""
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import pandas as pd
 import pytest
 
 from crediscore.config import Params
+from crediscore.models import train as train_module
 from crediscore.models.threshold import decide
 from crediscore.models.train import build_signature, main, prepare_xy, read_dvc_md5
 
@@ -34,6 +36,10 @@ def test_main_writes_artifacts_and_logs_an_mlflow_run(
     monkeypatch.chdir(tmp_path)  # mlflow artifacts land under tmp_path
     uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
     monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    dvc = tmp_path / "data" / "raw" / "application_train.csv.dvc"
+    dvc.parent.mkdir(parents=True)
+    dvc.write_text("outs:\n- md5: rawmd5\n  path: application_train.csv\n", "utf-8")
+    monkeypatch.setattr(train_module, "_git_sha", lambda: "abc123sha")
     out = tmp_path / "models"
     main(
         [
@@ -81,7 +87,10 @@ def test_main_writes_artifacts_and_logs_an_mlflow_run(
     assert tags["shap_unit"] == "log_odds"
     assert tags["model_type"] == "logreg"
     assert tags["serialization_format"] == "cloudpickle"
-    assert "data_hash" not in tags  # no .dvc file in tmp_path
+    assert tags["raw_data_hash"] == "rawmd5"  # md5 of the raw CSV, from DVC
+    assert tags["train_data_hash"] == hashlib.md5(train_file.read_bytes()).hexdigest()
+    assert tags["git_sha"] == "abc123sha"
+    assert "data_hash" not in tags
     assert run.data.params["model"] == "logreg"
     names = {a.path for a in mlflow.MlflowClient().list_artifacts(run.info.run_id)}
     assert {
