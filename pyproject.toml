@@ -62,7 +62,7 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 # Libraries without type hints
-module = ["kaggle.*", "sklearn.*", "shap.*", "scipy.*", "boto3.*", "evidently.*"]
+module = ["kaggle.*", "sklearn.*", "shap.*", "scipy.*", "boto3.*", "evidently.*", "joblib.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
