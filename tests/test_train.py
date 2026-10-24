@@ -101,7 +101,7 @@ def test_main_writes_artifacts_and_logs_an_mlflow_run(
     np.testing.assert_array_equal(
         reloaded.predict_proba(X)[:, 1], model.predict_proba(X)[:, 1]
     )
-    inputs = logged[0].signature.inputs
+    inputs = mlflow.models.get_model_info(logged[0].model_uri).signature.inputs
     assert inputs.input_names() == params.features.all
     assert not any(col.required for col in inputs.inputs)
 
@@ -149,8 +149,8 @@ def test_signature_is_all_optional_double_and_string(params: Params) -> None:
     sig = build_signature(params.features.numeric, params.features.categorical)
     cols = sig.inputs.inputs
     assert [c.name for c in cols] == params.features.all
-    assert {str(c.type) for c in cols[: len(params.features.numeric)]} == {"double"}
-    assert {str(c.type) for c in cols[len(params.features.numeric) :]} == {"string"}
+    assert {c.type.name for c in cols[: len(params.features.numeric)]} == {"double"}
+    assert {c.type.name for c in cols[len(params.features.numeric) :]} == {"string"}
     assert not any(c.required for c in cols)
 
 
