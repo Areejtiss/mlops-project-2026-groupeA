@@ -50,8 +50,8 @@
       "accept_share": 1.0
     },
     "single_threshold": {
-      "low": 0.1707,
-      "high": 0.1707,
+      "low": 0.1666392200250697,
+      "high": 0.1666392200250697,
       "cost": 5568.0,
       "cost_per_file": 0.348,
       "recall": 0.3754,
@@ -60,8 +60,8 @@
       "accept_share": 0.8739
     },
     "single_threshold_recall65": {
-      "low": 0.0926,
-      "high": 0.0926,
+      "low": 0.08980596784075529,
+      "high": 0.08980596784075529,
       "cost": 6692.0,
       "cost_per_file": 0.4183,
       "recall": 0.6618,
@@ -70,8 +70,8 @@
       "accept_share": 0.6649
     },
     "three_zones_unconstrained": {
-      "low": 0.0571,
-      "high": 0.75,
+      "low": 0.05624837956961369,
+      "high": 0.625,
       "cost": 3671.8,
       "cost_per_file": 0.2295,
       "recall": 0.7988,
@@ -80,8 +80,8 @@
       "accept_share": 0.5058
     },
     "three_zones_D3": {
-      "low": 0.0926,
-      "high": 0.1378,
+      "low": 0.08980596784075529,
+      "high": 0.12320901468644176,
       "cost": 5325.9,
       "cost_per_file": 0.3329,
       "recall": 0.6618,
@@ -102,8 +102,8 @@
       "accept_share": 1.0
     },
     "single_threshold": {
-      "low": 0.1707,
-      "high": 0.1707,
+      "low": 0.1666392200250697,
+      "high": 0.1666392200250697,
       "cost": 6798.0,
       "cost_per_file": 0.3399,
       "recall": 0.3858,
@@ -112,8 +112,8 @@
       "accept_share": 0.877
     },
     "single_threshold_recall65": {
-      "low": 0.0926,
-      "high": 0.0926,
+      "low": 0.08980596784075529,
+      "high": 0.08980596784075529,
       "cost": 8189.0,
       "cost_per_file": 0.4094,
       "recall": 0.665,
@@ -122,18 +122,18 @@
       "accept_share": 0.6721
     },
     "three_zones_unconstrained": {
-      "low": 0.0571,
-      "high": 0.75,
-      "cost": 4581.2,
-      "cost_per_file": 0.2291,
+      "low": 0.05624837956961369,
+      "high": 0.625,
+      "cost": 4580.9,
+      "cost_per_file": 0.229,
       "recall": 0.7944,
       "recall_margin": 0.1444,
       "review_share": 0.4867,
       "accept_share": 0.5132
     },
     "three_zones_D3": {
-      "low": 0.0926,
-      "high": 0.1378,
+      "low": 0.08980596784075529,
+      "high": 0.12320901468644176,
       "cost": 6495.6,
       "cost_per_file": 0.3248,
       "recall": 0.665,
