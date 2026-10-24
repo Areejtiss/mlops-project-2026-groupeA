@@ -18,7 +18,7 @@
 
 - Flavor **`mlflow.sklearn`**, chargé par `mlflow.sklearn.load_model(...)`. L'API a besoin de `predict_proba`, et SHAP du pipeline ajusté : le flavor `pyfunc` ne suffit pas.
 - Objet servi (le modèle enregistré) : un **`CalibratedClassifierCV(pipeline, cv=5, method="isotonic", ensemble=False)`** ajusté sur la partie train (T2).
-  - Avec `ensemble=False`, scikit-learn apprend **une seule** fonction isotonique sur les prédictions hors-pli des 5 plis, puis réajuste le pipeline sur **tout le train**.
+  - Avec `ensemble=False`, scikit-learn apprend **une seule** fonction isotonique sur les prédictions hors-pli des 5 plis, puis réajuste le pipeline sur **toute la partie fit** (80 % du train ; les 20 % restants sont la validation, D1).
   - Le modèle servi est donc une fonction **monotone** d'un seul pipeline : `calibrated_classifiers_[0].estimator`. C'est ce pipeline que SHAP explique (section 6).
   - Il n'y a **pas d'artefact séparé** pour le modèle non calibré.
 - `pipeline` est un `sklearn.pipeline.Pipeline` en deux étapes :
@@ -33,7 +33,7 @@
 ## 3. Entrée
 
 - **Exactement les colonnes `params.features.all`** (D2 option b), dans cet ordre : les 31 numériques puis les 10 catégorielles de `params.yaml`.
-- Les 8 features dérivées (`ANNUITY_INCOME_RATIO`, `CREDIT_INCOME_RATIO`, `CREDIT_TERM`, `AGE_YEARS`, `EMPLOYED_YEARS`, `DAYS_EMPLOYED_ANOM`, `EXT_SOURCE_MISSING_COUNT`, `IS_THIN_FILE`) **ne sont pas calculées par l'artefact**. Elles sont produites par la fonction partagée `add_derived_features(df)` d'Areej. Cette fonction est appelée par l'étape `featurize` **et** par l'API avant le modèle. Un test vérifie que les deux chemins donnent des colonnes identiques.
+- Les 8 features dérivées (`ANNUITY_INCOME_RATIO`, `CREDIT_INCOME_RATIO`, `CREDIT_TERM`, `AGE_YEARS`, `EMPLOYED_YEARS`, `DAYS_EMPLOYED_ANOM`, `EXT_SOURCE_MISSING_COUNT`, `IS_THIN_FILE`) **ne sont pas calculées par l'artefact**. Elles sont produites par la fonction partagée `add_derived_features(df)` d'Areej. Cette fonction est appelée par l'étape `featurize` **et** par l'API avant le modèle. Un test de parité (les deux chemins donnent des colonnes identiques) est **à écrire** quand l'étape `featurize` d'Areej et l'API d'Iyed existeront ; il n'existe pas encore.
 - Types (signature MLflow, construite explicitement par `crediscore.models.train.build_signature`, pas inférée) :
 
 | Colonnes | Type | Manquant autorisé |
@@ -76,7 +76,7 @@
   Les valeurs ci-dessus sont celles de la baseline LogReg (`reports/baseline_metrics.json`), arrondies pour la lecture.
 - **Dans le vrai fichier, `low` et `high` sont écrits en pleine précision (float64, jamais arrondis).**
 - Les seuils sont cherchés **exactement** sur toutes les probabilités distinctes de la validation, pas sur une grille (`crediscore.models.threshold.optimize_thresholds`, qui rend toujours `low ≤ high`).
-- **Règle du milieu.** Avec l'isotonique, une coupure posée exactement sur un palier ferait dépendre la décision d'une égalité de flottants : sur le test de la baseline, 1 350 dossiers ont `proba == low`, un arrondi à 4 décimales fait passer l'étude à 17,4 % et une proba en float32 fait tomber le recall à 58,9 %. Chaque seuil retenu est donc placé **au milieu entre son palier et le palier distinct immédiatement inférieur** (le palier lui-même s'il n'y en a pas). Les décisions sur la validation sont identiques (vérifié dans le code), et un aller-retour JSON ou une proba en float32 ne les change plus (testé).
+- **Règle du milieu.** Avec l'isotonique, une coupure posée exactement sur un palier ferait dépendre la décision d'une égalité de flottants : sur le test de la baseline, 1 350 dossiers ont `proba == low`, un arrondi à 4 décimales fait passer l'étude à 17,4 % et une proba en float32 fait tomber le recall à 58,9 %. Chaque seuil retenu est donc placé **au milieu entre son palier et le palier distinct immédiatement inférieur**. S'il n'y a pas de palier inférieur, la coupure est la moitié du palier. Si les deux paliers sont des doubles voisins (le milieu retombe sur le palier inférieur), la coupure reste sur son palier. Les probabilités et les seuils doivent être finis et dans [0, 1] (`NEVER`, juste au-dessus de 1, est admis pour « jamais refuser »). Les décisions sur la validation sont identiques (vérifié dans le code), et un aller-retour JSON ou une proba en float32 ne les change plus (testé).
 - **La décision est calculée sur la proba float64 non arrondie**, avant tout arrondi de la réponse de l'API.
 - Règle (D4), bornes incluses comme indiqué :
   - `proba < low` → `ACCEPTE` ;
@@ -108,7 +108,7 @@
 ## 7. Tags et métadonnées du run
 
 - Tags de la **version du modèle** (lus par l'API avec le modèle) : `threshold_low`, `threshold_high` (pleine précision), `shap_unit`.
-- Tags du **run** : `model_type`, `sklearn_version`, `git_sha`, `data_hash` (hash DVC des données d'entraînement), `serialization_format` (`cloudpickle`).
+- Tags du **run** : `model_type`, `sklearn_version`, `git_sha`, `raw_data_hash` (md5 DVC du CSV brut, lu dans `data/raw/application_train.csv.dvc`), `train_data_hash` (md5 du fichier réellement lu par `train` : le parquet `--train` ou le fichier `--sample`), `serialization_format` (`cloudpickle`).
 - Métriques de validation du run : ROC-AUC, PR-AUC, Brier, recall, part en étude, coût.
 - Les métriques de **test** sont écrites par `evaluate`, seul lecteur du test pour la sélection.
 
@@ -156,7 +156,9 @@ response = {"proba": round(float(proba[0]), 4), "decision": str(decision)}   # a
 - **Entrée brute attendue par `add_derived_features`** : les 23 colonnes brutes de `params.features.numeric`, plus `DAYS_BIRTH` et `DAYS_EMPLOYED` (à la place des 8 dérivées), plus les 10 catégorielles. Le modèle ignore toute autre colonne (`CODE_GENDER`, `SK_ID_CURR`…).
 - `low` et `high` sont lus tels quels (float64), jamais arrondis. Si `params.threshold.low/high` est renseigné (forçage manuel, D9), l'API l'utilise à la place et le journalise.
 - L'image de l'API doit installer `crediscore` (pour `add_derived_features`, `decide`, et la fonction `none_to_nan` référencée par le pickle) et exactement la version de scikit-learn de `poetry.lock`.
-- Au lot 3, `joblib.load` sera remplacé par `mlflow.sklearn.load_model("models:/crediscore@champion")`, et les seuils seront lus dans les tags de la version (`threshold_low`, `threshold_high`, `shap_unit`). Depuis la machine hôte, définir `MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false` (voir `.env.example`). Ce n'est pas nécessaire dans un conteneur du réseau compose.
+- Au lot 3, `joblib.load` sera remplacé par `mlflow.sklearn.load_model("models:/crediscore@champion")`, et les seuils seront lus dans les tags de la version (`threshold_low`, `threshold_high`, `shap_unit`). Accès au serveur MLflow :
+  - **depuis un conteneur du réseau compose** (l'API) : `MLFLOW_TRACKING_URI=http://mlflow:5000`. Cela fonctionne parce que le serveur liste `mlflow:5000` dans `--allowed-hosts` (sans cela, MLflow 3.17 répond 403 « Invalid Host header ») ; les URL présignées vers `http://minio:9000` sont résolues dans le réseau. Vérifié : un conteneur du réseau charge les deux modèles, mêmes probabilités que `model.joblib` ;
+  - **depuis la machine hôte** : `MLFLOW_TRACKING_URI=http://localhost:5000` **et** `MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false` (voir `.env.example`), sinon `load_model` reste bloqué sur `http://minio:9000`, que l'hôte ne résout pas.
 
 ---
 

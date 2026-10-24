@@ -23,7 +23,7 @@ Plan détaillé : `docs/plans/2026-10-24-achraf-roadmap.md`.
 ## Contrat 2 (artefact modèle), points actés
 
 - Nom `crediscore`, alias `champion` / `challenger` (les stages sont dépréciés).
-- Chargement en `mlflow.sklearn`, objet calibré (`CalibratedClassifierCV`, isotonique). Le pipeline non calibré est aussi stocké, pour SHAP.
+- Chargement en `mlflow.sklearn`, objet calibré (`CalibratedClassifierCV`, isotonique, `ensemble=False`). SHAP explique le pipeline non calibré contenu dans cet objet (`calibrated_classifiers_[0].estimator`) : pas d'artefact séparé.
 - Entrée : les colonnes `params.features.all` (D2). Sortie : probabilité de défaut.
 - `top_factors` : contributions SHAP en log-odds du modèle non calibré. Elles ne s'additionnent **pas** à `proba`.
 - Promotion : champion et challenger évalués **sur le même jeu récent**. Le challenger gagne s'il a une AUC ≥ celle du champion et ≥ 0,75, des écarts selon le sexe ≤ 10 pts (brut et égalité des chances), et un écart d'âge en égalité des chances ≤ celui de la baseline + 2 pts (≤ 34,9 pts, référence fixe, D5).
