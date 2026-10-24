@@ -102,6 +102,36 @@ def test_ci_sample_must_be_smaller_than_sample(tmp_path: Path) -> None:
         load_params(path)
 
 
+def test_lot2_keys_are_loaded() -> None:
+    params = load_params(PARAMS_FILE)
+    assert params.data.val_size == 0.2
+    assert params.cost.cost_review == 0.3
+    assert params.threshold.max_review_share == 0.15
+    assert params.threshold.min_recall == 0.65
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value"),
+    [
+        ("data", "val_size", 0),
+        ("data", "val_size", 1),
+        ("cost", "cost_review", 0),
+        ("cost", "cost_review", -0.3),
+        ("threshold", "max_review_share", -0.1),
+        ("threshold", "max_review_share", 1.5),
+        ("threshold", "min_recall", -0.1),
+        ("threshold", "min_recall", 1.5),
+    ],
+)
+def test_invalid_lot2_key_is_rejected(
+    tmp_path: Path, section: str, key: str, value: float
+) -> None:
+    path = write_params(tmp_path, {section: {key: value}})
+    # Match the bound message, not just the key (an unknown key also names it).
+    with pytest.raises(ValidationError, match=rf"{key}\n.*(greater|less) than"):
+        load_params(path)
+
+
 def test_params_are_read_only() -> None:
     params = load_params(PARAMS_FILE)
     with pytest.raises(ValidationError):
