@@ -47,11 +47,12 @@
 Contract 2 must state:
 - **Name and aliases:** registered as `crediscore`, with aliases `champion` and `challenger`.
 - **Flavor:** `mlflow.sklearn`, because the API needs `predict_proba` and SHAP needs the fitted estimator.
-- **Exact object:** a `CalibratedClassifierCV` that wraps the pipeline. The **uncalibrated pipeline is stored too**, for SHAP. The scikit-learn version is pinned (≥ 1.6) for the API image.
+- **Exact object:** a `CalibratedClassifierCV(..., ensemble=False)` that wraps the pipeline. Its `calibrated_classifiers_[0].estimator` is the full-train uncalibrated pipeline that SHAP explains, so there is no separate uncalibrated artifact. The scikit-learn version is pinned (≥ 1.6) for the API image.
 - **Input:** the exact input columns and their dtypes (the signature), which depend on D2.
 - **Output:** probability of class 1.
 - **Thresholds (D9):** they travel with the model version, as model-version tags plus `thresholds.json`.
-- **SHAP:** how it is computed, and the unit of `contribution`, which is log-odds of the uncalibrated model and does **not** add up to `proba`.
+- **SHAP:** how it is computed, and the unit of `contribution`: log-odds (raw margin) for LogReg, LightGBM and XGBoost, probability for RandomForest. In both cases it does **not** add up to `proba`.
+- **MLflow 3.17:** `serialization_format="cloudpickle"` (skops refuses `CalibratedClassifierCV`); always `models:/crediscore@<alias>`, never `runs:/…`; the sklearn flavor does not enforce the signature, so the API's Pydantic model validates inputs; numerics cast to float64 and every column optional in the signature.
 - **Derived features (if D2a):** the function is pinned with mlflow `code_paths`, so later edits to Areej's function cannot silently change old champions.
 
 ---
@@ -82,12 +83,13 @@ Technical decisions already taken (Achraf):
 **T1. Dependencies.** All ML dependencies go in **one PR at the start of lot 1** (scikit-learn, mlflow, lightgbm, xgboost, shap, optuna, scipy, matplotlib, boto3, evidently pinned to an exact version, jupyter in dev) to avoid `poetry.lock` conflicts. Evidently's API changed a lot across 0.4 → 0.7. The mypy overrides cover scikit-learn, mlflow, lightgbm, xgboost, shap and evidently. Optuna ships type hints.
 
 **T2. Splits and calibration.** The validation set is never reused for two fitted things:
-- calibration is `CalibratedClassifierCV(pipeline, cv=5, method="isotonic")` on the training part;
+- calibration is `CalibratedClassifierCV(pipeline, cv=5, method="isotonic", ensemble=False)` on the training part: one isotonic map learned on out-of-fold predictions, and the pipeline refitted on the whole training part. The served model is then exactly monotone in that one pipeline;
 - the validation part only serves threshold optimization and model selection;
 - Optuna uses CV on the training part.
 
 **T3. SHAP.**
-- SHAP explains the **uncalibrated** stored pipeline. Factor order is an approximation of the calibrated decision; the report states this.
+- SHAP explains the **uncalibrated** pipeline inside the served model (`calibrated_classifiers_[0].estimator`, T2). Factor order is an approximation of the calibrated decision; the report states this.
+- Units: log-odds (raw margin) for LogReg, LightGBM and XGBoost; probability for RandomForest (which stays a candidate). Written as the `shap_unit` model-version tag.
 - One-hot contributions are summed back to the original column.
 - `TreeExplainer` is used for tree models and `LinearExplainer` for LogReg.
 - For RandomForest, the latency test uses `feature_perturbation="tree_path_dependent"`, and the additivity check is done in probability space.
@@ -181,7 +183,7 @@ The PR is opened **only after the human says so**.
 - the top correlations with `TARGET`;
 - `EXT_SOURCE_*` missingness;
 - the thin-file segment (EXT_SOURCE-based definition, agreed with Areej): its size and default rate;
-- the default rate by `CODE_GENDER` (including `XNA`) and by age band (<30, 30–50, >50).
+- the default rate by `CODE_GENDER` (including `XNA`) and by age band (<30, 30–50, ≥50).
 
 Figures go to `reports/figures/` for the report. Outputs are cleared before commit (1 MB pre-commit limit).
 
@@ -217,33 +219,35 @@ Also write in the notebook why the cost ratio is 5:1 (roadmap requirement).
 **Lot 1 progress (2026-10-24):**
 - [x] 0. Dependencies (T1), one commit: scikit-learn 1.9.1, mlflow 3.17.2, lightgbm 4.7.0, xgboost 3.2.0, shap 0.51.0, optuna 5.0.0, scipy 1.17.1, matplotlib 3.11.2, boto3 1.43.117, **evidently pinned 0.7.23** (latest stable); jupyter, nbconvert, ipykernel in dev.
 - [x] 1. `notebooks/01_eda.ipynb` + 5 figures in `reports/figures/eda_*.png`.
-- [x] 2. `models/cost.py` in TDD, 18 tests, 100 % covered, mypy strict clean. The 5:1 rationale is written in `02_baseline.ipynb`.
+- [x] 2. `models/cost.py` in TDD, 25 tests, 100 % covered, mypy strict clean. The 5:1 rationale is written in `02_baseline.ipynb`.
+- [x] Review corrections (2026-10-25): asymmetric binary tests, 1-D error, float/bool decisions, BOM; `ensemble=False`; exact threshold search; contract 2 per coordinator D1–D3; `≥50` label. From now on the failing test is committed before the code (`test(...)` then `feat/fix(...)`).
 - [x] 3. `notebooks/02_baseline.ipynb` + 3 figures + `reports/baseline_metrics.json`.
 - [x] 4. `docs/contracts/02-model-artifact.md`, with the contract 3 proposal (decision + `top_factors`).
 - [ ] Contracts 2 and 3 approved by Areej and Iyed (sent for review by the human).
 - [ ] Adversarial review (≥ 30 mutants) and 10-minute walkthrough.
 
-**Measured (baseline LogReg, stratified 100k sample, split 64k/16k/20k, seed 42):**
+**Measured (baseline LogReg, stratified 100k sample, split 64k/16k/20k, seed 42, isotonic `ensemble=False`, exact threshold search over the 69 distinct validation probabilities):**
 
 | | Validation | Test |
 |---|---|---|
-| ROC-AUC (calibrated) | 0.739 | **0.746** |
-| PR-AUC (calibrated) | 0.222 | 0.228 |
+| ROC-AUC (calibrated) | 0.738 | **0.746** |
+| PR-AUC (calibrated) | 0.213 | 0.220 |
 | Brier uncalibrated / calibrated | 0.206 / 0.069 | 0.203 / **0.069** |
-| Single cost-optimal cut-off 0.170: recall, cost per file | 35.2 %, 0.346 | 35.2 %, 0.343 |
-| 3 zones D3 (0.087 / 0.129): recall, review share, cost per file | 65.3 %, 14.9 %, 0.329 | 66.0 %, 14.9 %, **0.321** (total 6 418.3) |
-| 3 zones unconstrained (0.058 / 0.714): review share | 49.8 % | 48.9 % |
+| Single cost-optimal cut-off 0.1707: recall, cost per file | 37.5 %, 0.348 | 38.6 %, 0.340 |
+| 3 zones D3 (0.0926 / 0.1378): recall (margin), review share, cost per file | 66.2 % (+1.2 pt), 14.2 %, 0.333 | 66.5 % (+1.5 pt), 14.2 %, **0.325** (total 6 495.6) |
+| 3 zones unconstrained (0.0571 / 0.7500): review share | 49.4 % | 48.7 % |
 
-- Baseline cost reference for the −15 % KPI: **0.321 per file on test** (target ≤ 0.273 with the same constraints).
-- D3 confirmed: without a cap, half of the files go to review. D8: a single cut-off gives only 35 % recall (not ~50 % as estimated in D8); with recall ≥ 65 % it costs more than accepting everyone (0.409 vs 0.404). 3 zones fix this.
-- **D5 answer: yes.** Test, D3 thresholds, "accepted" = `ACCEPTE` only (D8): age gap **34.0 pts raw, 32.6 pts equal opportunity**; gender 7.8 / 6.6 pts. With the single cut-off: age 19.9 / 16.9, gender 5.4 / 4.0. **Option b (equal opportunity) does not bring the age gap under 10 pts**, so the D5 rule as decided would block every promotion. New decision needed before lot 4 (human + team; tell the teacher).
+- Baseline cost on this test split: **0.325 per file** (≤ 0.276 for −15 %). Valid only on the same test split: lot 3 `evaluate` recomputes the baseline on Areej's test split.
+- D3 confirmed: without a cap, half of the files go to review. D8: a single cut-off gives only 38 % recall (not ~50 % as estimated in D8); with recall ≥ 65 % it costs more than accepting everyone (0.409 vs 0.404). 3 zones fix this. The review cap is not hit exactly (14.2 %) because isotonic probabilities come in steps.
+- **D5 measurement** (test, D3 thresholds, "accepted" = `ACCEPTE` only, D8): age gap **34.5 pts raw, 32.9 pts equal opportunity**; gender 7.8 / 6.6 pts. With the single cut-off: age 22.2 / 19.0, gender 5.9 / 4.5. Equal opportunity does not bring the age gap under 10 pts. The fairness rule is waiting for the human's decision.
 - No `XNA` row in the test split (4 in the whole dataset).
 
 **Deviations and why:**
 - T1: mypy overrides cover scikit-learn, shap, scipy, boto3 and evidently (checked with mypy). mlflow, lightgbm, xgboost, optuna and matplotlib ship type hints, so they get no override. Version ranges allow Python 3.11 (scipy ≥ 1.18 and the newest shap need 3.12).
 - The baseline uses the `params.data.sample_size` (100k) stratified sample, like the future featurize stage, not the full 307k rows.
 - `VAL_SIZE`, `COST_REVIEW`, `MAX_REVIEW_SHARE`, `MIN_RECALL` are notebook constants, **pending Areej's params PR**. The derived features use a local stand-in for Areej's `add_derived_features` (D2).
-- `business_cost` takes all three costs as required keyword arguments (no default `cost_review`), so a 3-zone call can never silently count review as free.
+- `business_cost` takes all three costs as required keyword arguments (no default `cost_review`), so a 3-zone call can never silently count review as free. Negative or NaN costs are not checked there: `config.py` already validates `gt=0`.
+- `ensemble=False` (review, coordinator D1): the isotonic map has only 69 steps, so PR-AUC drops slightly (test 0.228 → 0.220) and thresholds are step values. `thresholds.json` must store them in full precision.
 
 ### Lot 2 — S3: walking skeleton, then traced training · branch `feature/mlflow-training` · ~12 h incl. 2 review rounds
 
@@ -291,11 +295,11 @@ Tests:
 
 **7. `models/train.py` `main()`.**
 - Load params, split, fit, calibrate (T2), optimize the thresholds on validation.
-- Save the calibrated and uncalibrated models + `thresholds.json`.
+- Save the calibrated model (`ensemble=False`, which contains the pipeline SHAP explains) + `thresholds.json` with full-precision thresholds.
 - Log to MLflow if the URI is set: params, ROC-AUC, PR-AUC, Brier, recall@threshold, cost, review share, confusion matrix, ROC, PR and calibration curves, signature, DVC data hash as a tag.
 - `--sample` flag (T4).
 
-Test: `main()` on synthetic data, in a `tmp_path`, with a file-based MLflow URI, produces the run and the files.
+Test: `main()` on synthetic data, in a `tmp_path`, with the MLflow URI `sqlite:///<tmp_path>/mlflow.db` (not a file store), produces the run and the files.
 
 **8. `dvc.yaml` stage `train`.** Deps: the train parquet and `src/crediscore/models`. Params: `data`, `features`, `cost`, `threshold`.
 
@@ -314,7 +318,7 @@ Test: `main()` on synthetic data, in a `tmp_path`, with a file-based MLflow URI,
 
 **3. `models/evaluate.py`.** This is the `evaluate` stage and the **only** reader of the test split for model selection. It writes `reports/metrics.json`, tracked with `dvc metrics`:
 - ROC-AUC, PR-AUC, Brier, recall (D8), cost;
-- **cost vs the LogReg baseline (KPI −15 %)**;
+- **cost vs the LogReg baseline (KPI −15 %)**. `evaluate` **recomputes the LogReg baseline on the same test split**, with the same constraints. The −15 % reference is only valid that way, not against the lot 1 notebook number;
 - thin-file AUC, acceptance rate, and good payers accepted vs the D10 policy;
 - cost vs "accept all".
 
@@ -447,6 +451,7 @@ These are Claude's work hours, reviews included. Not included: Achraf's decision
 | Recall ≥ 65 % is not reached | Recall constraint in the optimizer; D8 |
 | Brier ≤ 0.07 is not reached | CV calibration; reported honestly (T6) |
 | `poetry.lock` conflicts | One early dependencies PR (T1) |
+| `poetry.lock` is 896 KiB, close to the pre-commit 1 000 KB limit (`check-added-large-files`) | Ask Areej to exclude `poetry.lock` from `check-added-large-files` before the next dependency |
 | Evidently API churn | Exact version pin; code against that version's docs only |
 | SHAP latency | Explainer built once; measured locally |
 | Iyed's CI is broken (`cache: poetry`) or skips `feature/*` pushes | Raised with Iyed (D6) |
