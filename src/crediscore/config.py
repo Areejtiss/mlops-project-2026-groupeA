@@ -86,9 +86,11 @@ class ThresholdConfig(StrictModel):
     min_recall: float = Field(ge=0, le=1)
 
     @model_validator(mode="after")
-    def low_below_high(self) -> Self:
-        if self.low is not None and self.high is not None and self.low >= self.high:
-            raise ValueError("threshold.low must be smaller than threshold.high")
+    def low_not_above_high(self) -> Self:
+        if self.low is not None and self.high is not None and self.low > self.high:
+            raise ValueError(
+                "threshold.low must be <= threshold.high (equal = 2 zones)"
+            )
         return self
 
 
