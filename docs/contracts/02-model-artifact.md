@@ -11,7 +11,7 @@
 - **Promotion** (`models/promote.py`, T7, D5). Le challenger devient champion si **toutes** ces conditions sont vraies, sur le même jeu récent pour les deux modèles :
   - AUC du challenger ≥ AUC du champion, et ≥ 0,75 ;
   - **sexe** : écart de taux d'acceptation (`ACCEPTE` seulement) entre F et M, `XNA` exclu, ≤ 10 pts, **et** écart d'égalité des chances ≤ 10 pts ;
-  - **âge** (<30, 30-50, ≥50) : écart d'égalité des chances du challenger ≤ celui du champion + 2 pts. Pas de seuil absolu ; les deux écarts d'âge sont publiés à chaque évaluation.
+  - **âge** (<30, 30-50, ≥50) : écart d'égalité des chances du challenger ≤ celui de la **baseline** LogReg + 2 pts, soit ≤ 34,9 pts (référence fixe : la baseline recalculée par `evaluate` au lot 3 sur le même jeu de test, 32,9 pts d'ici là ; s'applique dès la première promotion, ne dérive pas). Pas de seuil absolu ; les deux écarts d'âge sont publiés à chaque évaluation.
 - L'API charge `models:/crediscore@champion`. La « version du modèle » (`model_version`) est le numéro de version du Registry, en chaîne (ex. `"3"`).
 
 ## 2. Flavor et objet exact
