@@ -24,6 +24,17 @@ DERIVED = (
     "EXT_SOURCE_MISSING_COUNT",
     "IS_THIN_FILE",
 )
+# Raw numeric columns the derived features are computed from.
+RAW_INPUTS = [
+    "AMT_INCOME_TOTAL",
+    "AMT_CREDIT",
+    "AMT_ANNUITY",
+    "DAYS_BIRTH",
+    "DAYS_EMPLOYED",
+    "EXT_SOURCE_1",
+    "EXT_SOURCE_2",
+    "EXT_SOURCE_3",
+]
 
 
 def _ratio(num: pd.Series, den: pd.Series) -> pd.Series:
@@ -40,13 +51,16 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
 
     Args:
         df: Raw application rows. Needs AMT_INCOME_TOTAL, AMT_CREDIT,
-            AMT_ANNUITY, DAYS_BIRTH, DAYS_EMPLOYED and EXT_SOURCE_1/2/3.
+            AMT_ANNUITY, DAYS_BIRTH, DAYS_EMPLOYED and EXT_SOURCE_1/2/3
+            (`RAW_INPUTS`, cast to float64: None becomes NaN).
 
     Returns:
         A new frame, same index: every input column plus the `DERIVED` ones.
         The input is not modified.
     """
     out = df.copy()
+    # A one-row JSON request with a null gives an object column of None.
+    out[RAW_INPUTS] = out[RAW_INPUTS].astype("float64")
     anom = out["DAYS_EMPLOYED"] == DAYS_EMPLOYED_SENTINEL
     out["DAYS_EMPLOYED"] = out["DAYS_EMPLOYED"].mask(anom)
     ext = out[["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"]]
