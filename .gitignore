@@ -226,6 +226,8 @@ __marimo__/
 .dvc/cache
 # MLflow local runs
 mlruns/
+# Trained artifacts (DVC outputs). Root-anchored: src/crediscore/models is code.
+/models/
 # Processed data is produced by the DVC pipeline.
 # data/raw is NOT listed here: `dvc add` writes data/raw/.gitignore itself,
 # which ignores the data files but keeps the small .dvc pointer files visible.
