@@ -13,11 +13,17 @@
 ## 2. Flavor et objet exact
 
 - Flavor **`mlflow.sklearn`**, chargé par `mlflow.sklearn.load_model(...)`. L'API a besoin de `predict_proba`, et SHAP du pipeline ajusté : le flavor `pyfunc` ne suffit pas.
-- Objet servi (artefact `model/` du run, celui qui est enregistré) : un **`CalibratedClassifierCV(pipeline, cv=5, method="isotonic")`** ajusté sur la partie train (T2).
+- Objet servi (artefact `model/` du run, celui qui est enregistré) : un **`CalibratedClassifierCV(pipeline, cv=5, method="isotonic", ensemble=False)`** ajusté sur la partie train (T2).
+  - Avec `ensemble=False`, scikit-learn apprend **une seule** fonction isotonique sur les prédictions hors-pli des 5 plis, puis réajuste le pipeline sur **tout le train**.
+  - Le modèle servi est donc une fonction **monotone** d'un seul pipeline : `calibrated_classifiers_[0].estimator`. C'est ce pipeline que SHAP explique (section 6).
+  - Il n'y a **pas d'artefact séparé** pour le modèle non calibré.
 - `pipeline` est un `sklearn.pipeline.Pipeline` en deux étapes :
   1. `pre` : un `ColumnTransformer`. Colonnes numériques : imputation médiane + `StandardScaler` (étape optionnelle pour les modèles à arbres). Colonnes catégorielles : imputation par la modalité la plus fréquente + `OneHotEncoder(handle_unknown="ignore")`. `remainder="drop"`.
   2. `model` : le classifieur (LogReg, LightGBM, XGBoost ou RandomForest).
-- Le **pipeline non calibré** ajusté sur tout le train est stocké dans le même run, artefact **`uncalibrated_model/`** (même flavor). Il sert **uniquement à SHAP**. Il n'est jamais utilisé pour la décision.
+- Conséquence de l'isotonique : la probabilité servie est **en paliers**. La baseline n'a que 69 valeurs distinctes sur la validation, et beaucoup de dossiers ont exactement la même probabilité.
+- **MLflow 3.17, journalisation et chargement :**
+  - `mlflow.sklearn.log_model(..., serialization_format="cloudpickle")`. Le format `skops` refuse `CalibratedClassifierCV`.
+  - Le modèle est toujours adressé par **nom enregistré + alias** (`models:/crediscore@champion`), jamais par `runs:/<run_id>/<artefact>`.
 - **Version de scikit-learn épinglée.** Un pickle scikit-learn n'est fiable qu'avec la même version : ≥ 1.6, actuellement **1.9.1** (`poetry.lock`). L'image Docker de l'API doit installer exactement la version de `poetry.lock`. La version est aussi écrite en tag (`sklearn_version`).
 
 ## 3. Entrée
@@ -28,8 +34,11 @@
 
 | Colonnes | Type | Manquant autorisé |
 |---|---|---|
-| 31 numériques (montants, `EXT_SOURCE_*`, `DAYS_*`, `CNT_*`, flags 0/1, dérivées) | `double` (float64). Les entiers et flags sont convertis en float64 par l'appelant | oui (`NaN`/`null`), imputé par le pipeline |
+| 31 numériques (montants, `EXT_SOURCE_*`, `DAYS_*`, `CNT_*`, flags 0/1, dérivées) | `double` (float64). `train` convertit toutes les numériques en float64 avant l'ajustement et la signature ; l'API fait de même | oui (`NaN`/`null`), imputé par le pipeline |
 | 10 catégorielles (`NAME_*`, `OCCUPATION_TYPE`, `FLAG_OWN_CAR`, `FLAG_OWN_REALTY`, `ORGANIZATION_TYPE`) | `string` | oui, imputé ; une modalité inconnue est ignorée (vecteur one-hot nul) |
+
+- Dans la signature, **toutes les colonnes sont marquées optionnelles** (`required=False`) : n'importe quelle feature peut manquer en production.
+- **Le flavor `mlflow.sklearn` n'applique pas la signature.** Une colonne absente ou de mauvais type n'est pas rejetée par MLflow. Selon le cas, scikit-learn lève une erreur ou produit un résultat faux. **La validation des entrées est donc faite par le modèle Pydantic de l'API (Iyed)** : noms, types, valeurs manquantes autorisées. La signature sert de documentation et de référence pour ce schéma.
 
 - **Jamais en entrée :** `CODE_GENDER` (et toute colonne de `sensitive_cols`), `SK_ID_CURR`, `TARGET`. Si elles sont présentes, le `ColumnTransformer` les ignore (`remainder="drop"`). Un test le vérifie (lot 2).
 - `EMPLOYED_YEARS` vaut `NaN` quand `DAYS_EMPLOYED = 365243` (sentinelle) ; `DAYS_EMPLOYED_ANOM` vaut alors 1.
@@ -47,20 +56,22 @@
 
 ```json
 {
-  "low": 0.087,
-  "high": 0.129,
+  "low": 0.0926,
+  "high": 0.1378,
   "cost_fn": 5.0,
   "cost_fp": 1.0,
   "cost_review": 0.3,
   "min_recall": 0.65,
   "max_review_share": 0.15,
-  "val_recall": 0.6525,
-  "val_review_share": 0.1486,
-  "val_cost_per_file": 0.3293
+  "val_recall": 0.6618,
+  "val_review_share": 0.1421,
+  "val_cost_per_file": 0.3329
 }
 ```
 
-  (valeurs de la baseline LogReg, `reports/baseline_metrics.json`).
+  Les valeurs ci-dessus sont celles de la baseline LogReg (`reports/baseline_metrics.json`), arrondies pour la lecture.
+- **Dans le vrai fichier, `low` et `high` sont écrits en pleine précision (float64, jamais arrondis).** Avec l'isotonique, chaque seuil est égal à un palier de probabilité. L'arrondir déplacerait tout un palier de dossiers d'une zone à l'autre.
+- Les seuils sont cherchés **exactement** sur toutes les probabilités distinctes de la validation, pas sur une grille.
 - Règle (D4), bornes incluses comme indiqué :
   - `proba < low` → `ACCEPTE` ;
   - `low ≤ proba < high` → `A_ETUDIER` ;
@@ -71,10 +82,18 @@
 
 ## 6. SHAP (T3)
 
-- SHAP explique le **pipeline non calibré** (`uncalibrated_model/`). L'explainer est construit une fois au chargement :
+- SHAP explique le **pipeline non calibré contenu dans le modèle servi** : `model.calibrated_classifiers_[0].estimator` (section 2), sans artefact séparé. L'explainer est construit une fois au chargement :
   - `LinearExplainer` pour la LogReg ;
   - `TreeExplainer` pour les modèles à arbres (RandomForest : `feature_perturbation="tree_path_dependent"`).
-- Unité de `contribution` : **log-odds du modèle non calibré**. Les contributions s'additionnent (avec la valeur de base) au log-odds du modèle non calibré, **pas** à `proba` : on ne peut pas les sommer pour retrouver `proba`. L'ordre des facteurs est une approximation de la décision calibrée (la calibration isotonique est monotone, mais non linéaire). Le rapport le précise.
+- **Unité de `contribution`, selon le type de modèle :**
+
+| Modèle | Unité de `contribution` | Les contributions + la valeur de base donnent |
+|---|---|---|
+| LogReg, LightGBM, XGBoost | **log-odds** (marge brute) du pipeline non calibré | le log-odds non calibré |
+| RandomForest | **probabilité** (classe 1) du pipeline non calibré | la probabilité non calibrée |
+
+- Dans les deux cas, les contributions **ne s'additionnent pas à `proba`** (la probabilité calibrée servie). Comme le modèle servi est une fonction monotone du pipeline expliqué (`ensemble=False`), un facteur qui pousse le score non calibré vers le haut pousse aussi `proba` vers le haut ou la laisse sur le même palier. Le rapport précise cette approximation.
+- L'unité est écrite en tag de la version du modèle (`shap_unit` = `log_odds` ou `probability`), pour que l'API et le rapport l'affichent correctement.
 - Les contributions des colonnes one-hot sont **ré-additionnées par colonne d'origine** (`OCCUPATION_TYPE`, pas `cat__OCCUPATION_TYPE_Laborers`).
 - `value` : la valeur reçue en entrée pour cette colonne, avant imputation et mise à l'échelle ; `null` si elle manquait.
 - Signe : contribution > 0 = augmente le risque de défaut.
@@ -82,11 +101,19 @@
 
 ## 7. Tags et métadonnées du run
 
-`model_type`, `sklearn_version`, `git_sha`, `data_hash` (hash DVC des données d'entraînement), `threshold_low`, `threshold_high`, et les métriques de validation (ROC-AUC, PR-AUC, Brier, recall, part en étude, coût). Les métriques de **test** sont écrites par `evaluate` (seul lecteur du test pour la sélection).
+- Tags de la **version du modèle** (lus par l'API avec le modèle) : `threshold_low`, `threshold_high` (pleine précision), `shap_unit`.
+- Tags du **run** : `model_type`, `sklearn_version`, `git_sha`, `data_hash` (hash DVC des données d'entraînement), `serialization_format` (`cloudpickle`).
+- Métriques de validation du run : ROC-AUC, PR-AUC, Brier, recall, part en étude, coût.
+- Les métriques de **test** sont écrites par `evaluate`, seul lecteur du test pour la sélection.
 
 ## 8. Référence baseline (notebook `02_baseline.ipynb`)
 
-LogReg calibrée sur le test : ROC-AUC 0,746 ; PR-AUC 0,228 ; Brier 0,069 ; seuils 3 zones 0,087 / 0,129 ; recall 66,0 % ; 14,9 % en étude ; coût **0,321 par dossier**. Cette valeur est la référence du KPI −15 %.
+LogReg calibrée (`ensemble=False`), sur le test :
+- ROC-AUC 0,746 ; PR-AUC 0,220 ; Brier 0,069 ;
+- seuils 3 zones 0,0926 / 0,1378 ; recall 66,5 % ; 14,2 % en étude ;
+- coût **0,325 par dossier**.
+
+Ce chiffre n'est la référence du KPI −15 % que sur ce jeu de test : au lot 3, `evaluate` recalcule la baseline sur le split de test définitif et compare les modèles à ce recalcul.
 
 ---
 
@@ -116,7 +143,10 @@ Réponse de `/predict` :
 | `top_factors` | liste d'**exactement 3** objets `{feature, value, contribution}`, triés par \|contribution\| décroissante | voir section 6 |
 | `top_factors[].feature` | `str` | nom d'une colonne de `params.features.all` (colonne d'origine, jamais un nom one-hot) |
 | `top_factors[].value` | `float \| str \| null` | valeur d'entrée brute de cette colonne |
-| `top_factors[].contribution` | `float` | log-odds du modèle non calibré ; > 0 augmente le risque ; ne s'additionne pas à `proba` |
+| `top_factors[].contribution` | `float` | unité selon le modèle (section 6) : log-odds pour LogReg, LightGBM et XGBoost ; probabilité pour RandomForest. > 0 augmente le risque ; ne s'additionne pas à `proba` |
 | `model_version` | `str` | version du Registry du modèle `champion` qui a répondu ; les seuils utilisés sont ceux de cette version (D9) |
 
-Côté Pydantic (Iyed) : modèles `StrictModel`, `decision: Literal[...]`, `top_factors: list[Factor] = Field(min_length=3, max_length=3)`.
+Côté Pydantic (Iyed) :
+- réponse : modèles `StrictModel`, `decision: Literal[...]`, `top_factors: list[Factor] = Field(min_length=3, max_length=3)` ;
+- **requête : un modèle `StrictModel` qui valide les entrées** (colonnes de la section 3, types, `None` autorisé). Le flavor sklearn n'applique pas la signature MLflow : c'est la seule barrière.
+- L'unité de `contribution` est lue dans le tag `shap_unit` de la version servie. Le schéma peut l'exposer à l'interface sans changer la forme de la réponse.
