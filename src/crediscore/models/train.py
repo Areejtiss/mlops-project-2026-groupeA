@@ -21,6 +21,7 @@ Defaults: --train data/processed/train.parquet, --params params.yaml.
 """
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -194,6 +195,11 @@ def read_dvc_md5(path: Path) -> str | None:
     return str(meta["outs"][0]["md5"])
 
 
+def file_md5(path: Path) -> str:
+    """md5 of a file's bytes (same algorithm as DVC)."""
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
 def _git_sha() -> str | None:
     try:
         out = subprocess.run(
@@ -213,8 +219,13 @@ def log_to_mlflow(
     thresholds: dict[str, float],
     figures: dict[str, Figure],
     counts: npt.NDArray[np.int64],
+    train_data_hash: str,
 ) -> str:
-    """Log one run (not registered). Returns the run id."""
+    """Log one run (not registered). Returns the run id.
+
+    Tags `raw_data_hash` (DVC md5 of the raw CSV, if the pointer file exists)
+    and `train_data_hash` (md5 of the file actually trained on).
+    """
     import mlflow
     import mlflow.sklearn
 
@@ -228,9 +239,11 @@ def log_to_mlflow(
         "model_type": name,
         "sklearn_version": sklearn.__version__,
         "serialization_format": "cloudpickle",
+        "train_data_hash": train_data_hash,
         **threshold_tags,
     }
-    for key, value in [("git_sha", _git_sha()), ("data_hash", read_dvc_md5(DVC_FILE))]:
+    optional = [("git_sha", _git_sha()), ("raw_data_hash", read_dvc_md5(DVC_FILE))]
+    for key, value in optional:
         if value is not None:
             tags[key] = value
     with mlflow.start_run(run_name=name) as run:
@@ -354,7 +367,8 @@ def main(argv: list[str] | None = None) -> None:
         sys.stdout.reconfigure(errors="replace")
 
     params = load_params(args.params)
-    df = pd.read_parquet(args.sample or args.train)
+    data_file: Path = args.sample or args.train
+    df = pd.read_parquet(data_file)
     result = train(df, args.model, params)
     th, metrics = result["thresholds"], result["metrics"]
     y_val, proba = result["y_val"], result["proba_val"]
@@ -376,6 +390,7 @@ def main(argv: list[str] | None = None) -> None:
             thresholds=th,
             figures=figures,
             counts=confusion_counts(y_val, proba, th["low"], th["high"]),
+            train_data_hash=file_md5(data_file),
         )
         print(f"MLflow run {run_id}")
     for fig in figures.values():
