@@ -8,6 +8,7 @@ data:
   processed_dir: data/processed
   sample_size: 100000       # stratified sample (guide: <= 200k rows)
   test_size: 0.2            # 80/20 train/test split
+  val_size: 0.2             # share of train held out for thresholds (D1)
   random_state: 42          # same seed everywhere = reproducible runs
   missing_threshold: 0.6    # drop columns with more than 60% missing values
   ci_sample_size: 5000      # committed fixture used by CI and CML
@@ -80,12 +81,18 @@ features:
 cost:
   cost_fn: 5    # false negative: default not detected
   cost_fp: 1    # false positive: good client rejected
+  cost_review: 0.3  # one file sent to manual review, whatever its label (D3)
 
-# Decision zones on the default probability (Achraf fills them in S3):
-#   proba < low -> ACCEPTE, low <= proba < high -> A ETUDIER, proba >= high -> REFUSE
+# Decision zones on the default probability (D4 codes):
+#   proba < low -> ACCEPTE, low <= proba < high -> A_ETUDIER, proba >= high -> REFUSE
+# The thresholds are optimized by `train` and travel with the model version
+# (thresholds.json + MLflow tags, D9). low/high are an OPTIONAL MANUAL OVERRIDE:
+# leave them null unless you deliberately want to force the model's thresholds.
 threshold:
   low: null
   high: null
+  max_review_share: 0.15  # at most 15% of files sent to review (D3)
+  min_recall: 0.65        # defaults detected, review counted as detected (D8)
 
 # Drift simulation (monitoring/simulator.py), used to test drift detection.
 drift:
