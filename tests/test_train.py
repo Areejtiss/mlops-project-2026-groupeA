@@ -166,6 +166,126 @@ def test_signature_is_all_optional_double_and_string(params: Params) -> None:
     assert not any(c.required for c in cols)
 
 
+def test_tune_logs_nested_trials_and_fits_the_best_params(
+    tmp_path: Path, train_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    mlflow.set_tracking_uri(uri)
+    out = tmp_path / "models"
+    main(
+        [
+            "--params",
+            str(PARAMS_FILE),
+            "--train",
+            str(train_file),
+            "--model",
+            "lightgbm",
+            "--tune",
+            "2",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    mlflow.set_tracking_uri(uri)
+    runs = mlflow.search_runs(experiment_names=["crediscore"], output_format="list")
+    parents = [r for r in runs if "mlflow.parentRunId" not in r.data.tags]
+    (parent,) = parents
+    children = [r for r in runs if r not in parents]
+    assert len(children) == 2
+    assert {r.data.tags["mlflow.parentRunId"] for r in children} == {parent.info.run_id}
+    assert all("cv_roc_auc" in r.data.metrics for r in children)
+    best = max(children, key=lambda r: r.data.metrics["cv_roc_auc"])
+    assert parent.data.metrics["best_cv_roc_auc"] == best.data.metrics["cv_roc_auc"]
+    assert parent.data.params["tune_trials"] == "2"
+    used = json.loads((out / "model_params.json").read_text(encoding="utf-8"))
+    assert {k: str(v) for k, v in used.items()} == best.data.params
+    for key, value in used.items():
+        assert parent.data.params[f"model__{key}"] == str(value)
+    model = joblib.load(out / "model.joblib")
+    inner = model.calibrated_classifiers_[0].estimator[-1]
+    assert inner.n_estimators == used["n_estimators"]
+
+
+def test_model_params_file_exclude_and_experiment_tag(
+    tmp_path: Path,
+    train_file: Path,
+    synthetic_frame: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The D5 run: same params as a tuned run, without AGE_YEARS, tagged.
+    monkeypatch.chdir(tmp_path)
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    mlflow.set_tracking_uri(uri)
+    hp = tmp_path / "hp.json"
+    hp.write_text(json.dumps({"n_estimators": 40, "num_leaves": 7}), "utf-8")
+    out = tmp_path / "noage"
+    main(
+        [
+            "--params",
+            str(PARAMS_FILE),
+            "--train",
+            str(train_file),
+            "--model",
+            "lightgbm",
+            "--model-params",
+            str(hp),
+            "--exclude",
+            "AGE_YEARS",
+            "--experiment",
+            "no_age",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    model = joblib.load(out / "model.joblib")
+    inner = model.calibrated_classifiers_[0].estimator
+    assert (inner[-1].n_estimators, inner[-1].num_leaves) == (40, 7)
+    assert not any("AGE_YEARS" in c for c in inner[0].get_feature_names_out())
+    X = synthetic_frame.copy()
+    changed = X.assign(AGE_YEARS=99.0)
+    np.testing.assert_array_equal(
+        model.predict_proba(changed[X.columns])[:, 1],
+        model.predict_proba(X)[:, 1],
+    )
+    mlflow.set_tracking_uri(uri)
+    (run,) = mlflow.search_runs(experiment_names=["crediscore"], output_format="list")
+    assert run.data.tags["experiment"] == "no_age"
+    assert run.data.tags["excluded_features"] == "AGE_YEARS"
+    assert run.info.run_name == "lightgbm-no_age"
+    assert run.data.params["model__n_estimators"] == "40"
+
+
+def test_exclude_rejects_a_column_that_is_not_a_numeric_feature(
+    train_file: Path,
+) -> None:
+    with pytest.raises(SystemExit):
+        main(
+            ["--params", str(PARAMS_FILE), "--train", str(train_file), "--exclude", "X"]
+        )
+
+
+def test_xgboost_gets_scale_pos_weight_from_the_fit_part(
+    params: Params, synthetic_frame: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, object] = {}
+    real = train_module.build_pipeline
+
+    def spy(*a, **k):
+        seen.update(k.get("model_params") or {})
+        return real(*a, **k)
+
+    monkeypatch.setattr(train_module, "build_pipeline", spy)
+    result = train_module.train(synthetic_frame, "xgboost", params)
+    n_fit = result["metrics"]["n_fit"]
+    y_val = result["y_val"]
+    n_pos_fit = synthetic_frame[params.target].sum() - y_val.sum()
+    assert seen["scale_pos_weight"] == pytest.approx((n_fit - n_pos_fit) / n_pos_fit)
+    assert train_module.SHAP_UNIT["xgboost"] == "log_odds"
+
+
 def test_shap_unit_per_model() -> None:
     # Contract 2 section 6: probability for RandomForest, log-odds otherwise.
     assert train_module.SHAP_UNIT == {
