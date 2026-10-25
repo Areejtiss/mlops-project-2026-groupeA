@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from crediscore.config import load_params
-from crediscore.data.features import DERIVED, add_derived_features
+from crediscore.data.features import DERIVED, RAW_INPUTS, add_derived_features
 
 PARAMS = load_params(Path(__file__).resolve().parents[1] / "params.yaml")
 
@@ -144,11 +144,14 @@ def test_one_row_request_with_every_field_none() -> None:
     assert out["IS_THIN_FILE"] == 1
 
 
+@pytest.mark.filterwarnings("error")
 @pytest.mark.parametrize("col", RAW_NUMERIC)
 def test_one_row_request_with_one_numeric_none(col: str) -> None:
     df = raw_row().astype(object)
     df[col] = None
     out = add_derived_features(df)
     assert out[col].isna().all()
+    if col in RAW_INPUTS:  # every input of a derived feature is cast
+        assert out[col].dtype == "float64", col
     derived = out[list(DERIVED)].astype(float)
     assert np.isfinite(derived.fillna(0)).all().all()
