@@ -2,7 +2,7 @@
 # Owner: Iyed (each member adds their service through a reviewed PR).
 #
 # S2: MinIO, an S3-compatible object store used as the DVC remote.
-# S3: MLflow tracking server (UI on http://localhost:5000), artifacts in MinIO.
+# S3: MLflow tracking server (UI on http://localhost:${MLFLOW_PORT:-5000}), artifacts in MinIO.
 # Later: API (blue/green), Prometheus, Grafana.
 #
 # Usage:
