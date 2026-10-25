@@ -66,8 +66,12 @@ def test_sensitive_and_id_columns_are_dropped(
     changed["CODE_GENDER"] = changed["CODE_GENDER"].map({"F": "M", "M": "F"})
     changed[params.id_col] = changed[params.id_col][::-1].to_numpy()
     reference = without.predict_proba(df[params.features.all])[:, 1]
-    np.testing.assert_array_equal(with_extra.predict_proba(extra)[:, 1], reference)
-    np.testing.assert_array_equal(with_extra.predict_proba(changed)[:, 1], reference)
+    # The random forest sums its trees in thread order: ~1e-16 noise.
+    atol = 1e-12 if name == "random_forest" else 0.0
+    for X in (extra, changed):
+        np.testing.assert_allclose(
+            with_extra.predict_proba(X)[:, 1], reference, rtol=0, atol=atol
+        )
     used = set(with_extra[0].get_feature_names_out())
     assert not any("CODE_GENDER" in c or params.id_col in c for c in used)
 

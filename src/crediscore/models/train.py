@@ -67,7 +67,12 @@ from crediscore.models.threshold import (  # noqa: E402
 
 EXPERIMENT = "crediscore"
 # Unit of the SHAP contributions of each model (contract 2 section 6).
-SHAP_UNIT = {"logreg": "log_odds", "lightgbm": "log_odds"}
+SHAP_UNIT = {
+    "logreg": "log_odds",
+    "lightgbm": "log_odds",
+    "xgboost": "log_odds",
+    "random_forest": "probability",
+}
 DVC_FILE = Path("data/raw/application_train.csv.dvc")
 
 
