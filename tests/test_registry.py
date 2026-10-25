@@ -82,6 +82,9 @@ def tracked(tmp_path_factory: pytest.TempPathFactory) -> Path:
     make_synthetic_frame(params).to_parquet(data)
     hp = base / "hp.json"
     hp.write_text(json.dumps({"n_estimators": 40}), encoding="utf-8")
+    dvc = base / "data" / "raw" / "application_train.csv.dvc"
+    dvc.parent.mkdir(parents=True)
+    dvc.write_text("outs:\n- md5: rawmd5\n  path: application_train.csv\n", "utf-8")
     old_cwd, old_uri = Path.cwd(), os.environ.get("MLFLOW_TRACKING_URI")
     uri = f"sqlite:///{(base / 'mlflow.db').as_posix()}"
     os.chdir(base)
@@ -137,7 +140,10 @@ def test_first_registration_is_champion_then_challenger(store: Path) -> None:
     v2, alias2 = register(client, runs["lightgbm"].info.run_id)
     assert (v2, alias2) == ("2", "challenger")
     model = client.get_registered_model(MODEL_NAME)
-    assert model.aliases == {"champion": "1", "challenger": "2"}
+    assert {k: str(v) for k, v in model.aliases.items()} == {
+        "champion": "1",
+        "challenger": "2",
+    }
     assert client.get_model_version_by_alias(MODEL_NAME, "champion").run_id == (
         runs["logreg"].info.run_id
     )
@@ -149,14 +155,17 @@ def test_version_tags_are_copied_exactly(store: Path) -> None:
     version, _ = register(client, run.info.run_id)
     tags = client.get_model_version(MODEL_NAME, version).tags
     for key in VERSION_TAGS:
-        assert tags[key] == run.data.tags[key], key
+        if key != "git_sha":  # no git repository around the test store
+            assert tags[key] == run.data.tags[key], key
     assert set(VERSION_TAGS) >= {
         "threshold_low",
         "threshold_high",
         "shap_unit",
         "train_data_hash",
+        "raw_data_hash",
         "model_type",
     }
+    assert tags["raw_data_hash"] == "rawmd5"
     th = json.loads((store / "m1" / "thresholds.json").read_text(encoding="utf-8"))
     assert float(tags["threshold_low"]) == th["low"]  # full precision
     assert float(tags["threshold_high"]) == th["high"]
@@ -217,3 +226,12 @@ def test_main_run_id_registers_that_run(store: Path) -> None:
     registry.main(["--run-id", run_id])
     client = mlflow.MlflowClient()
     assert client.get_model_version_by_alias(MODEL_NAME, "champion").run_id == run_id
+
+
+def test_no_experiment_means_no_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = f"sqlite:///{(tmp_path / 'empty.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    mlflow.set_tracking_uri(uri)
+    assert registry.training_runs(mlflow.MlflowClient(), "any") == []
