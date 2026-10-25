@@ -369,8 +369,14 @@ Test: `main()` on synthetic data, in a `tmp_path`, with the MLflow URI `sqlite:/
 - [x] Minor 10 (Iyed): `${MLFLOW_PORT:-5000}`, `MLFLOW_PORT` in `.env.example`, compose comment on the MinIO root account (local use only).
 - [x] Minor 11: test of the cp1252 fix (fails without it). Commit `af69614` has a wrong subject (it adds the hash/git_sha tag test, not a split test); recorded in the next commit, history not rewritten.
 - [x] Minor 12: CML note above.
-- **Mutation replay** (reviewer's `mutate.py`, on a `git archive` copy): 63 original mutants, 9 no longer apply to the corrected code and are replaced by 10 equivalents, plus 14 mutants on the new lines → **78 run, 78 killed, 0 survived**. The 7 previous survivors are killed (#61, judged equivalent, is now killed too).
+- ~~Mutation replay: 78 run, 78 killed~~ **Withdrawn, did not reproduce.** In the `git archive` copy the old `git_sha` test failed on its own (no `.git`), so several "kills" were that failure, not the mutant. Rule since then: run the unmutated suite in the copy first, and quote mutation numbers only from a log.
 - **Probes replayed:** `probe_threshold` (its brute force uses a 2.0 cut, now rejected by design: replayed with `NEVER`): 0 mismatches in 300 random cases, adjacent-float steps now resolved, float32 and JSON round-trips exact. `probe_lowest_step`: cut 0.005, float32 gives the same decisions. `probe_serving`: 200/200; a column absent from the request (not None) still raises `KeyError`. The API must send every column, with None if missing (contract 3, Iyed). `probe_mlflow`: contract-2 run, new tags present, reload identical.
+
+**Lot 2 status: reviewed "ready" (2026-10-25) after two review rounds and a final minor pass.**
+- Reviewer mutation counts: round 1, 63 mutants, 56 killed / 7 survived; round 2, 87 run, 79 killed / 8 survived (4 equivalent, 4 fixed in the final pass).
+- Final minor pass: the `git_sha` test uses throwaway repositories (it failed outside a checkout); survivors #66 (accept-all keeps `NEVER`), #88 (every raw input cast to float64, warnings as errors), #90 (`--sample` tags the md5 of the sample file) and #93 (accept-all with probabilities of exactly 1.0) are killed. Contract 2 §3/§9 and the contract-3 proposal: every raw column must be present, the API fills an absent field with `None`. §5: float32 caveat for neighbouring doubles. Compose header shows `${MLFLOW_PORT:-5000}`.
+- Replay of `mutate2.py` on a `git archive` copy of the final pass (unmutated suite first: 227 passed with no `.git`): **87 run, 83 killed, 4 survived, 9 skipped** (old mutants whose line changed). The 4 survivors are equivalent: #19 and #70 (the same checks with the same messages run again in `business_cost` / `decide`), #82 (`size` vs `shape` once both are 1-D), #61 (EXT_SOURCE column order). Log: `scratchpad/lot2-fix2/mutation3.log` of the session.
+- Checks: 227 tests, coverage 95 % (new modules 100 %, `train.py` 99 %: `__main__`).
 
 ### Lot 3 — S4: comparison, evaluate, registry (Jalon 2) · branch `feature/model-registry` · ~10 h incl. review
 
