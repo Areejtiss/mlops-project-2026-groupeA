@@ -227,3 +227,52 @@ def test_git_sha_inside_and_outside_a_repository(
     assert train_module._git_sha() == head
     monkeypatch.chdir(plain)
     assert train_module._git_sha() is None
+
+
+def test_sample_mode_tags_the_md5_of_the_sample_file(
+    tmp_path: Path,
+    train_file: Path,
+    synthetic_frame: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    mlflow.set_tracking_uri(uri)  # an earlier test set the process-wide URI
+    other = tmp_path / "other.parquet"  # a --train that must NOT be hashed
+    synthetic_frame.head(500).to_parquet(other)
+    main(
+        [
+            "--params",
+            str(PARAMS_FILE),
+            "--train",
+            str(other),
+            "--sample",
+            str(train_file),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    mlflow.set_tracking_uri(uri)
+    (run,) = mlflow.search_runs(experiment_names=["crediscore"], output_format="list")
+    assert (
+        run.data.tags["train_data_hash"]
+        == hashlib.md5(train_file.read_bytes()).hexdigest()
+    )
+
+
+def test_accept_all_cost_counts_probabilities_of_exactly_one(
+    params: Params, synthetic_frame: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every validation proba is 1.0: "accept all" must still accept them (NEVER
+    # cut), so its cost is cost_fn per default.
+    class AllOnes:
+        def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+            return np.c_[np.zeros(len(X)), np.ones(len(X))]
+
+    monkeypatch.setattr(train_module, "fit_model", lambda *a, **k: AllOnes())
+    result = train_module.train(synthetic_frame, "logreg", params)
+    y_val = result["y_val"]
+    assert result["metrics"]["accept_all_cost_per_file"] == pytest.approx(
+        params.cost.cost_fn * y_val.mean()
+    )
