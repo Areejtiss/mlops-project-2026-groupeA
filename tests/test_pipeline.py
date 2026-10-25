@@ -7,7 +7,13 @@ from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import Pipeline
 
 from crediscore.config import Params
-from crediscore.models.pipeline import MODELS, build_pipeline, calibrate
+from crediscore.models.pipeline import (
+    MODELS,
+    N_JOBS,
+    build_pipeline,
+    calibrate,
+    imbalance_params,
+)
 
 NAMES = sorted(MODELS)
 
@@ -21,8 +27,8 @@ def make(name: str, params: Params) -> Pipeline:
     )
 
 
-def test_both_models_are_available() -> None:
-    assert NAMES == ["lightgbm", "logreg"]
+def test_all_models_are_available() -> None:
+    assert NAMES == ["lightgbm", "logreg", "random_forest", "xgboost"]
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -89,6 +95,59 @@ def test_logreg_is_balanced(params: Params) -> None:
 
 def test_lightgbm_handles_imbalance(params: Params) -> None:
     assert make("lightgbm", params)[-1].get_params()["is_unbalance"] is True
+
+
+def test_random_forest_is_balanced_and_bounded(params: Params) -> None:
+    rf = make("random_forest", params)[-1]
+    assert rf.class_weight == "balanced"
+    assert rf.n_jobs == N_JOBS and 0 < N_JOBS <= 8
+    assert rf.random_state == params.data.random_state
+
+
+def test_xgboost_is_bounded_and_seeded(params: Params) -> None:
+    xgb = make("xgboost", params)[-1]
+    assert xgb.n_jobs == N_JOBS
+    assert xgb.random_state == params.data.random_state
+
+
+def test_imbalance_params_weights_xgboost_positives_only() -> None:
+    y = np.array([0] * 9 + [1] * 3)
+    assert imbalance_params("xgboost", y) == {"scale_pos_weight": 3.0}
+    for name in ["logreg", "lightgbm", "random_forest"]:
+        assert imbalance_params(name, y) == {}
+
+
+def test_model_params_override_the_defaults(params: Params) -> None:
+    pipe = build_pipeline(
+        "xgboost",
+        numeric=params.features.numeric,
+        categorical=params.features.categorical,
+        seed=params.data.random_state,
+        model_params={"max_depth": 2, "scale_pos_weight": 7.5},
+    )
+    assert pipe[-1].max_depth == 2
+    assert pipe[-1].scale_pos_weight == 7.5
+
+
+def test_numeric_subset_drops_a_feature(
+    params: Params, synthetic_frame: pd.DataFrame
+) -> None:
+    # The D5 experiment: AGE_YEARS stays in the input but not in the model.
+    numeric = [c for c in params.features.numeric if c != "AGE_YEARS"]
+    pipe = build_pipeline(
+        "lightgbm",
+        numeric=numeric,
+        categorical=params.features.categorical,
+        seed=params.data.random_state,
+    )
+    X, y = synthetic_frame[params.features.all], synthetic_frame[params.target]
+    pipe.fit(X, y)
+    assert not any("AGE_YEARS" in c for c in pipe[0].get_feature_names_out())
+    changed = X.copy()
+    changed["AGE_YEARS"] = 99.0
+    np.testing.assert_array_equal(
+        pipe.predict_proba(changed)[:, 1], pipe.predict_proba(X)[:, 1]
+    )
 
 
 def test_unknown_model_raises(params: Params) -> None:

@@ -166,6 +166,16 @@ def test_signature_is_all_optional_double_and_string(params: Params) -> None:
     assert not any(c.required for c in cols)
 
 
+def test_shap_unit_per_model() -> None:
+    # Contract 2 section 6: probability for RandomForest, log-odds otherwise.
+    assert train_module.SHAP_UNIT == {
+        "logreg": "log_odds",
+        "lightgbm": "log_odds",
+        "xgboost": "log_odds",
+        "random_forest": "probability",
+    }
+
+
 def test_read_dvc_md5(tmp_path: Path) -> None:
     dvc = tmp_path / "x.csv.dvc"
     dvc.write_text("outs:\n- md5: abc123\n  path: x.csv\n", encoding="utf-8")
