@@ -312,3 +312,5 @@ def test_main_on_a_registry_uri_uses_the_version_thresholds(
     th = json.loads((tmp_path / "m" / "thresholds.json").read_text(encoding="utf-8"))
     assert m["thresholds"] == {"low": th["low"], "high": th["high"]}
     assert m["model_uri"] == "models:/crediscore@champion"
+    _, by_number = ev.load_model(f"models:/crediscore/{version.version}")
+    assert by_number == th
