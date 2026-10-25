@@ -323,12 +323,12 @@ Test: `main()` on synthetic data, in a `tmp_path`, with the MLflow URI `sqlite:/
 - [x] 4. `models/split.py` (D1), 100 %.
 - [x] 5. `models/pipeline.py`: `build_pipeline("logreg" | "lightgbm")` + `calibrate()` (`ensemble=False`), 100 %.
 - [x] 6. `models/threshold.py`: `decide`, `zone_metrics`, `optimize_thresholds` (exact search, midpoint cuts, rule A), 100 %. Quick mutation check on the boundaries: 7/7 killed (review cap `<`, recall `<=`, cost-tie `<=`, last argmin, `NEVER` → 1.0, no midpoint, strict `low < high`).
-- [x] 7. `models/train.py`: `main()`, artifacts, `--sample` (CML: 4–5 s on 5 000 rows), MLflow logging; 98 % (uncovered: no-git fallback, `data_hash` tag line, `__main__`).
+- [x] 7. `models/train.py`: `main()`, artifacts, `--sample` (CML: 4–5 s on 5 000 rows), MLflow logging; 98 % at 10ce7ae (uncovered: the `_git_sha` failure path, the optional-tag assignment and `__main__`); 99 % after the correction pass (only `__main__`).
 - [x] 1. Walking skeleton: hand-off for Iyed in contract 2 §9 (snippet checked on a raw row). The API side is Iyed's.
 - [x] 2. MLflow service for Iyed (T8): `deploy/mlflow/Dockerfile` (mlflow 3.17.2 + boto3 1.43.117), compose service `mlflow` (SQLite volume, `--artifacts-destination s3://mlflow`, healthcheck), `mlflow` bucket in `minio-init`, `.env.example`.
 - [ ] 8. `dvc.yaml` stage `train`: **deferred**, Areej's `dvc.yaml` and `split` outputs do not exist yet. Until then a throwaway prep script (not committed) builds `data/processed/{train,test}.parquet` like the notebook.
 - [ ] The API serves the skeleton (Iyed). Adversarial review (≥ 30 mutants) and walkthrough.
-- Checks: black, flake8, mypy strict green; **176 tests**, total coverage 94 % (`download.py` 64 % is Areej's, unchanged).
+- Checks: black, flake8, mypy strict green; **176 tests** at 10ce7ae, **225** after the correction pass; total coverage 94 % → 95 % (`download.py` 64 % is Areej's, unchanged).
 
 **Measured (real data, 100k stratified sample, 80k train → 64k fit / 16k val, seed 42; validation only, test untouched):**
 
@@ -343,7 +343,7 @@ Test: `main()` on synthetic data, in a `tmp_path`, with the MLflow URI `sqlite:/
 
 - LogReg reproduces the notebook validation numbers exactly (same split, same cost 0.3329).
 - LightGBM (default-ish parameters, no tuning) is −4.5 % on cost: far from −15 %. Lot 3 (Optuna, XGBoost) has to close the gap, on the test split.
-- Proof: REST API lists both runs FINISHED with the metrics, tags (`threshold_low/high` in full precision, `shap_unit`, `data_hash` = raw md5), curves and JSON artifacts; objects are in MinIO bucket `mlflow`; both logged models reload through MLflow with identical probabilities to the local `model.joblib`.
+- Proof: REST API lists both runs FINISHED with the metrics, tags (`threshold_low/high` in full precision, `shap_unit`, raw md5, then named `data_hash`, renamed `raw_data_hash` in the correction pass), curves and JSON artifacts; objects are in MinIO bucket `mlflow`; both logged models reload through MLflow with identical probabilities to the local `model.joblib`.
 
 **Deviations and why:**
 - `optimize_thresholds` returns `low ≤ high`, not strictly `<`: the notebook, contract 2 (`low = high` = 2 zones) and the "accept all" candidate required by the round-2 review all need it. A strict search would also make `max_review_share = 0` infeasible. Infeasibility can then only come from a constraint outside [0, 1].
@@ -356,6 +356,21 @@ Test: `main()` on synthetic data, in a `tmp_path`, with the MLflow URI `sqlite:/
 - The thresholds are run tags and logged-model tags (MLflow 3 `LoggedModel`); they become model-version tags at registration (lot 3).
 - `train` does not apply the `params.threshold.low/high` override: it is a serving-time override (contract 2 §5).
 - `docker compose -p mlops-project-2026-groupea up -d --build mlflow` from this worktree recreated the MinIO container (its config hash changed); data is on the named volume and was checked intact (158 MiB in `dvc-store`).
+
+- **CML numbers on the 5k fixture look poor by design.** With 1 000 validation rows, the isotonic map has very few, coarse steps, and `min_recall = 0.65` must still be met: LogReg then costs **0.546 per file vs 0.405 for "accept all"** (LightGBM 0.425). This is not a bug. CML on the fixture checks that training runs and gives a plausible AUC, not the business cost; the cost KPI is read on the full split.
+
+**Lot 2 correction pass (2026-10-25, review of 10ce7ae: "ready with corrections", no blocking item):**
+- [x] Important 1, compose (Iyed): `--allowed-hosts "mlflow:5000,localhost:${MLFLOW_PORT:-5000},127.0.0.1:${MLFLOW_PORT:-5000}"`. Container recreated with `-p mlops-project-2026-groupea`. Proven: a container on the compose network loads both logged models (`http://mlflow:5000`, same probabilities as `model.joblib`, no extra env var); the host gets 200; an unlisted Host still gets 403. `dvc status -c` from the main copy: "Cache and remote 'minio' are in sync". Contract 2 §9 corrected (containers: allowed-hosts; host: `MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false`).
+- [x] Important 2, `features.py` (Areej): the 8 raw inputs are cast to float64 first; a one-row request with `DAYS_BIRTH`/`DAYS_EMPLOYED` None no longer raises, and the pandas FutureWarning is gone. The reviewer's serving probe now serves 200/200 raw rows with None.
+- [x] Minor 3–6, `threshold.py`: lowest-step cut = `cut / 2`; a midpoint that rounds onto the lower step (neighbouring doubles) keeps the cut; proba and thresholds must be finite and in [0, 1] (`NEVER` allowed) in `decide` and `optimize_thresholds`; one message per input check; both internal guards reached by monkeypatch tests (no `pragma`). Split index and `-inf` tests added. The baseline notebook uses the same midpoint rule (re-executed, outputs byte-identical).
+- [x] Minor 7: run tags `raw_data_hash` (DVC md5 of the raw CSV) and `train_data_hash` (md5 of the file read); `git_sha` tested.
+- [x] Minor 8 (Areej): the `params.yaml` override accepts `low == high`.
+- [x] Minor 9: decisions doc (no separate uncalibrated artifact), contract 2 §2 (fit part = 80 % of train), §3 (parity test pending), §7 (tags), this coverage note.
+- [x] Minor 10 (Iyed): `${MLFLOW_PORT:-5000}`, `MLFLOW_PORT` in `.env.example`, compose comment on the MinIO root account (local use only).
+- [x] Minor 11: test of the cp1252 fix (fails without it). Commit `af69614` has a wrong subject (it adds the hash/git_sha tag test, not a split test); recorded in the next commit, history not rewritten.
+- [x] Minor 12: CML note above.
+- **Mutation replay** (reviewer's `mutate.py`, on a `git archive` copy): 63 original mutants, 9 no longer apply to the corrected code and are replaced by 10 equivalents, plus 14 mutants on the new lines → **78 run, 78 killed, 0 survived**. The 7 previous survivors are killed (#61, judged equivalent, is now killed too).
+- **Probes replayed:** `probe_threshold` (its brute force uses a 2.0 cut, now rejected by design: replayed with `NEVER`): 0 mismatches in 300 random cases, adjacent-float steps now resolved, float32 and JSON round-trips exact. `probe_lowest_step`: cut 0.005, float32 gives the same decisions. `probe_serving`: 200/200; a column absent from the request (not None) still raises `KeyError`. The API must send every column, with None if missing (contract 3, Iyed). `probe_mlflow`: contract-2 run, new tags present, reload identical.
 
 ### Lot 3 — S4: comparison, evaluate, registry (Jalon 2) · branch `feature/model-registry` · ~10 h incl. review
 
