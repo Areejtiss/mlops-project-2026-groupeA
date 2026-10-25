@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -204,8 +205,25 @@ def test_main_survives_a_cp1252_console(
 def test_git_sha_inside_and_outside_a_repository(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sha = train_module._git_sha()
-    assert sha is not None and len(sha) == 40
-    monkeypatch.chdir(tmp_path.anchor)  # drive root: not a git repository
-    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", tmp_path.anchor)
+    # Throwaway repositories: the test must not depend on the checkout it runs
+    # in (a git archive copy or a Docker build context has no .git).
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    repo, plain = tmp_path / "repo", tmp_path / "plain"
+    repo.mkdir()
+    plain.mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        [*git, "commit", "-q", "--allow-empty", "-m", "x"], cwd=repo, check=True
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    monkeypatch.chdir(repo)
+    assert train_module._git_sha() == head
+    monkeypatch.chdir(plain)
     assert train_module._git_sha() is None
