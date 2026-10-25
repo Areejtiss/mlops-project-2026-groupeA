@@ -41,7 +41,7 @@
 | 31 numériques (montants, `EXT_SOURCE_*`, `DAYS_*`, `CNT_*`, flags 0/1, dérivées) | `double` (float64). `train` convertit toutes les numériques en float64 avant l'ajustement et la signature ; l'API fait de même | oui (`NaN`/`null`), imputé par le pipeline |
 | 10 catégorielles (`NAME_*`, `OCCUPATION_TYPE`, `FLAG_OWN_CAR`, `FLAG_OWN_REALTY`, `ORGANIZATION_TYPE`) | `string` | oui, imputé ; une modalité inconnue est ignorée (vecteur one-hot nul) |
 
-- Dans la signature, **toutes les colonnes sont marquées optionnelles** (`required=False`) : n'importe quelle feature peut manquer en production.
+- Dans la signature, **toutes les colonnes sont marquées optionnelles** (`required=False`) : n'importe quelle feature peut manquer en production. Une valeur manquante veut dire `None`, pas une colonne absente : **Toutes les colonnes brutes doivent être présentes** dans le DataFrame de la requête : l'API remplit un champ absent avec `None` ; sinon `add_derived_features` ou le modèle lèvent `KeyError`.
 - **Le flavor `mlflow.sklearn` n'applique pas la signature.** Une colonne absente ou de mauvais type n'est pas rejetée par MLflow. Selon le cas, scikit-learn lève une erreur ou produit un résultat faux. **La validation des entrées est donc faite par le modèle Pydantic de l'API (Iyed)** : noms, types, valeurs manquantes autorisées. La signature sert de documentation et de référence pour ce schéma.
 
 - **Jamais en entrée :** `CODE_GENDER` (et toute colonne de `sensitive_cols`), `SK_ID_CURR`, `TARGET`. Si elles sont présentes, le `ColumnTransformer` les ignore (`remainder="drop"`). Un test le vérifie (lot 2).
@@ -76,7 +76,7 @@
   Les valeurs ci-dessus sont celles de la baseline LogReg (`reports/baseline_metrics.json`), arrondies pour la lecture.
 - **Dans le vrai fichier, `low` et `high` sont écrits en pleine précision (float64, jamais arrondis).**
 - Les seuils sont cherchés **exactement** sur toutes les probabilités distinctes de la validation, pas sur une grille (`crediscore.models.threshold.optimize_thresholds`, qui rend toujours `low ≤ high`).
-- **Règle du milieu.** Avec l'isotonique, une coupure posée exactement sur un palier ferait dépendre la décision d'une égalité de flottants : sur le test de la baseline, 1 350 dossiers ont `proba == low`, un arrondi à 4 décimales fait passer l'étude à 17,4 % et une proba en float32 fait tomber le recall à 58,9 %. Chaque seuil retenu est donc placé **au milieu entre son palier et le palier distinct immédiatement inférieur**. S'il n'y a pas de palier inférieur, la coupure est la moitié du palier. Si les deux paliers sont des doubles voisins (le milieu retombe sur le palier inférieur), la coupure reste sur son palier. Les probabilités et les seuils doivent être finis et dans [0, 1] (`NEVER`, juste au-dessus de 1, est admis pour « jamais refuser »). Les décisions sur la validation sont identiques (vérifié dans le code), et un aller-retour JSON ou une proba en float32 ne les change plus (testé).
+- **Règle du milieu.** Avec l'isotonique, une coupure posée exactement sur un palier ferait dépendre la décision d'une égalité de flottants : sur le test de la baseline, 1 350 dossiers ont `proba == low`, un arrondi à 4 décimales fait passer l'étude à 17,4 % et une proba en float32 fait tomber le recall à 58,9 %. Chaque seuil retenu est donc placé **au milieu entre son palier et le palier distinct immédiatement inférieur**. S'il n'y a pas de palier inférieur, la coupure est la moitié du palier. Si les deux paliers sont des doubles voisins (le milieu retombe sur le palier inférieur), la coupure reste sur son palier. Les probabilités et les seuils doivent être finis et dans [0, 1] (`NEVER`, juste au-dessus de 1, est admis pour « jamais refuser »). Les décisions sur la validation sont identiques (vérifié dans le code), et un aller-retour JSON ou une proba en float32 ne les change plus (testé), sauf le cas des doubles voisins où la coupe reste sur sa marche.
 - **La décision est calculée sur la proba float64 non arrondie**, avant tout arrondi de la réponse de l'API.
 - Règle (D4), bornes incluses comme indiqué :
   - `proba < low` → `ACCEPTE` ;
@@ -153,6 +153,7 @@ decision = decide(proba, th["low"], th["high"])[0]       # "ACCEPTE" / "A_ETUDIE
 response = {"proba": round(float(proba[0]), 4), "decision": str(decision)}   # arrondi APRÈS la décision
 ```
 
+- **Toutes les colonnes brutes doivent être présentes** dans le DataFrame de la requête : l'API remplit un champ absent avec `None` ; sinon `add_derived_features` ou le modèle lèvent `KeyError`.
 - **Entrée brute attendue par `add_derived_features`** : les 23 colonnes brutes de `params.features.numeric`, plus `DAYS_BIRTH` et `DAYS_EMPLOYED` (à la place des 8 dérivées), plus les 10 catégorielles. Le modèle ignore toute autre colonne (`CODE_GENDER`, `SK_ID_CURR`…).
 - `low` et `high` sont lus tels quels (float64), jamais arrondis. Si `params.threshold.low/high` est renseigné (forçage manuel, D9), l'API l'utilise à la place et le journalise.
 - L'image de l'API doit installer `crediscore` (pour `add_derived_features`, `decide`, et la fonction `none_to_nan` référencée par le pickle) et exactement la version de scikit-learn de `poetry.lock`.
@@ -193,5 +194,5 @@ Réponse de `/predict` :
 
 Côté Pydantic (Iyed) :
 - réponse : modèles `StrictModel`, `decision: Literal[...]`, `top_factors: list[Factor] = Field(min_length=3, max_length=3)` ;
-- **requête : un modèle `StrictModel` qui valide les entrées** (colonnes de la section 3, types, `None` autorisé). Le flavor sklearn n'applique pas la signature MLflow : c'est la seule barrière.
+- **requête : un modèle `StrictModel` qui valide les entrées** (colonnes de la section 3, types, `None` autorisé). **Toutes les colonnes brutes doivent être présentes** dans le DataFrame de la requête : l'API remplit un champ absent avec `None` ; sinon `add_derived_features` ou le modèle lèvent `KeyError`. Le flavor sklearn n'applique pas la signature MLflow : c'est la seule barrière.
 - L'unité de `contribution` est lue dans le tag `shap_unit` de la version servie. Le schéma peut l'exposer à l'interface sans changer la forme de la réponse.
