@@ -169,7 +169,7 @@ def test_accept_all_is_a_candidate(step: float) -> None:
     y, p = [1] + [0] * 20, [step] * 21
     low, high = optimize_thresholds(y, p, **COSTS, **FREE)
     assert set(decide(p, low, high).tolist()) == {ACCEPT}
-    assert low == high > step
+    assert low == high == NEVER  # the sentinel itself, not a midpoint
 
 
 @pytest.mark.parametrize("seed", range(8))
