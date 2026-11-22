@@ -106,3 +106,21 @@ def test_params_are_read_only() -> None:
     params = load_params(PARAMS_FILE)
     with pytest.raises(ValidationError):
         params.data.test_size = 0.5  # type: ignore[misc]
+
+
+def test_drift_params_are_loaded() -> None:
+    crisis = load_params(PARAMS_FILE).drift.economic_crisis
+    assert crisis.income_factor < 1 < crisis.credit_factor
+    assert crisis.employment_factor < 1
+
+
+def test_negative_drift_factor_is_rejected(tmp_path: Path) -> None:
+    crisis = {
+        "income_factor": -0.8,
+        "credit_factor": 1.25,
+        "employment_factor": 0.7,
+        "noise_std": 0.05,
+    }
+    path = write_params(tmp_path, {"drift": {"economic_crisis": crisis}})
+    with pytest.raises(ValidationError, match="income_factor"):
+        load_params(path)
