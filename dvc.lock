@@ -189,3 +189,33 @@ stages:
       hash: md5
       md5: b592bc0a008970e463671935ad4514f6
       size: 459032
+  simulate_crisis:
+    cmd: python -m crediscore.monitoring.simulator
+    deps:
+    - path: data/processed/test.parquet
+      hash: md5
+      md5: caaefbf15f21adefbf16652131129de5
+      size: 1465492
+    - path: src/crediscore/data/featurize.py
+      hash: md5
+      md5: b451b0801a46375de6ef6c655fa6fb3d
+      size: 5560
+    - path: src/crediscore/monitoring/simulator.py
+      hash: md5
+      md5: 36c9de7a4105ddce3518372abd0db79a
+      size: 4460
+    params:
+      params.yaml:
+        data.processed_dir: data/processed
+        drift:
+          seed: 7
+          economic_crisis:
+            income_factor: 0.8
+            credit_factor: 1.25
+            employment_factor: 0.7
+            noise_std: 0.05
+    outs:
+    - path: data/simulated/economic_crisis.parquet
+      hash: md5
+      md5: e5b6bbe040e2eb85975341abe3964465
+      size: 2294504
