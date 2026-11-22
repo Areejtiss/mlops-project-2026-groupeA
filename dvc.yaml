@@ -66,3 +66,16 @@ stages:
       # Committed to Git (GitHub CI cannot reach MinIO), so not cached by DVC.
       - tests/fixtures/ci_sample.parquet:
           cache: false
+
+  # Drifted version of the test set, used to test drift detection (Achraf).
+  simulate_crisis:
+    cmd: python -m crediscore.monitoring.simulator
+    deps:
+      - src/crediscore/monitoring/simulator.py
+      - src/crediscore/data/featurize.py   # safe_divide
+      - data/processed/test.parquet
+    params:
+      - data.processed_dir
+      - drift
+    outs:
+      - data/simulated/economic_crisis.parquet

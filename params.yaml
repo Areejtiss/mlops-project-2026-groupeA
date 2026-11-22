@@ -86,3 +86,12 @@ cost:
 threshold:
   low: null
   high: null
+
+# Drift simulation (monitoring/simulator.py), used to test drift detection.
+drift:
+  seed: 7                   # same seed -> same drifted batch
+  economic_crisis:
+    income_factor: 0.8      # incomes drop by 20%
+    credit_factor: 1.25     # loans (credit and annuity) grow by 25%
+    employment_factor: 0.7  # employment seniority shrinks by 30% (job losses)
+    noise_std: 0.05         # relative gaussian noise on the shifted columns

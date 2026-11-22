@@ -84,6 +84,22 @@ class ThresholdConfig(StrictModel):
         return self
 
 
+class EconomicCrisisConfig(StrictModel):
+    """Intensity of the "economic crisis" drift scenario (multiplicative factors)."""
+
+    income_factor: float = Field(gt=0)
+    credit_factor: float = Field(gt=0)
+    employment_factor: float = Field(gt=0)
+    noise_std: float = Field(ge=0, lt=1)
+
+
+class DriftConfig(StrictModel):
+    """Drift simulation parameters."""
+
+    seed: int = Field(ge=0)
+    economic_crisis: EconomicCrisisConfig
+
+
 class Params(StrictModel):
     """The whole params.yaml file."""
 
@@ -94,6 +110,7 @@ class Params(StrictModel):
     features: FeaturesConfig
     cost: CostConfig
     threshold: ThresholdConfig
+    drift: DriftConfig
 
     @model_validator(mode="after")
     def no_leak_into_features(self) -> Self:

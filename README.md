@@ -114,13 +114,14 @@ poetry run dvc repro    # ne relance que les étapes dont une entrée a changé
 poetry run dvc push     # après une modification : envoie les nouvelles sorties dans MinIO
 ```
 
-Le pipeline (`dvc.yaml`) enchaîne trois étapes :
+Le pipeline (`dvc.yaml`) enchaîne quatre étapes :
 
 | Étape | Rôle | Sortie |
 |---|---|---|
 | `validate` | 307 511 × 122, colonnes requises, `TARGET` binaire (~8 %), ids uniques. Code de sortie 1 en cas d'échec : le pipeline s'arrête. | `reports/validation.json` (Git) |
 | `featurize` | Échantillon stratifié de 100 000 lignes, suppression des colonnes > 60 % manquantes, `DAYS_EMPLOYED = 365243` → NaN + `DAYS_EMPLOYED_ANOM`, 8 features dérivées. | `data/processed/features.parquet` |
 | `split` | Train/test stratifié 80/20, sans client commun, et fixture CI de 5 000 lignes. | `train.parquet`, `test.parquet`, `tests/fixtures/ci_sample.parquet` (Git) |
+| `simulate_crisis` | Version « crise économique » du jeu de test (voir ci-dessous). | `data/simulated/economic_crisis.parquet` |
 
 Chaque étape déclare les clés de `params.yaml` qu'elle lit : modifier `data.test_size` relance
 uniquement `split`. Les empreintes de toutes les entrées et sorties sont dans `dvc.lock` (commité).
@@ -132,13 +133,33 @@ est peu connu des bureaux de crédit, c'est la population visée par l'inclusion
 `tests/fixtures/ci_sample.parquet` est commité dans Git (et non dans MinIO) car la CI GitHub ne peut
 pas accéder à MinIO : CI et CML s'entraînent uniquement sur ce fichier.
 
+**Simulation de dérive.** `DriftSimulator` (`src/crediscore/monitoring/simulator.py`) produit une
+copie dérivée d'un lot, pour tester la détection de dérive. Scénario `economic_crisis` : revenus × 0,8,
+crédit et annuité × 1,25, ancienneté d'emploi × 0,7, chacun avec un bruit gaussien de 5 %. Les ratios
+revenu/crédit sont recalculés, les autres colonnes restent identiques. Intensités et graine dans la
+section `drift` de `params.yaml` : même graine, même lot.
+
+```python
+from crediscore.config import load_params
+from crediscore.monitoring.simulator import DriftSimulator
+
+drifted = DriftSimulator(load_params().drift).economic_crisis(batch)
+```
+
 ### 8. Lancer les tests
 
 ```bash
 poetry run pytest
 ```
 
-Attendu : tous les tests passent.
+Attendu : tous les tests passent. Les tests de `tests/test_data_quality.py` vérifient les vraies
+sorties de `data/processed/` : ils sont ignorés (`skipped`) si les données n'ont pas été récupérées
+avec `dvc pull`, comme dans la CI GitHub.
+
+> **Windows.** `.gitattributes` force les fins de ligne LF : DVC calcule ses empreintes sur les octets
+> des fichiers, et des fins de ligne CRLF feraient voir à `dvc status` des étapes modifiées alors
+> qu'elles ne le sont pas. Si `dvc status` signale du code modifié sans raison après un `git pull`,
+> lancer `git add --renormalize .` puis vérifier que `git status` est propre.
 
 ## Dépannage
 
