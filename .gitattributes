@@ -1,0 +1,10 @@
+# Same line endings (LF) on every OS.
+# DVC hashes file bytes: with Git's Windows default (CRLF on checkout), dvc.lock
+# hashes would differ between Windows and Linux/macOS and `dvc repro` would see
+# unchanged stages as modified.
+* text=auto eol=lf
+
+# Binary files: never touch them.
+*.parquet binary
+*.png binary
+*.pdf binary
