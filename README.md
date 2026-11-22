@@ -19,6 +19,9 @@ src/crediscore/
   api/             # FastAPI
 tests/             # pytest (tests/fixtures/ : échantillon CI)
 data/raw/          # données brutes, versionnées par DVC (fichiers .dvc dans Git)
+data/processed/    # sorties du pipeline DVC (features, train, test)
+reports/           # validation.json (métriques DVC)
+dvc.yaml, dvc.lock # pipeline validate -> featurize -> split
 params.yaml        # paramètres du pipeline (contrat 1)
 docker-compose.yml # MinIO (remote DVC)
 ```
@@ -88,8 +91,9 @@ Ces valeurs vont dans `.dvc/config.local`, ignoré par Git.
 poetry run dvc pull
 ```
 
-Attendu : `data/raw/application_train.csv` (307 511 lignes × 122 colonnes) et
-`data/raw/HomeCredit_columns_description.csv`.
+Attendu : `data/raw/application_train.csv` (307 511 lignes × 122 colonnes),
+`data/raw/HomeCredit_columns_description.csv`, et les sorties du pipeline dans
+`data/processed/` (`features.parquet`, `train.parquet`, `test.parquet`).
 
 > **Bucket vide ?** `dvc pull` télécharge depuis le MinIO configuré. Si ce MinIO ne contient pas
 > encore les données (premier lancement sur une machine), on les récupère depuis Kaggle puis on
@@ -103,7 +107,32 @@ Attendu : `data/raw/application_train.csv` (307 511 lignes × 122 colonnes) et
 > Pour télécharger, il faut avoir accepté les règles de la compétition :
 > <https://www.kaggle.com/competitions/home-credit-default-risk/rules>
 
-### 7. Lancer les tests
+### 7. Rejouer le pipeline de données
+
+```bash
+poetry run dvc repro    # ne relance que les étapes dont une entrée a changé
+poetry run dvc push     # après une modification : envoie les nouvelles sorties dans MinIO
+```
+
+Le pipeline (`dvc.yaml`) enchaîne trois étapes :
+
+| Étape | Rôle | Sortie |
+|---|---|---|
+| `validate` | 307 511 × 122, colonnes requises, `TARGET` binaire (~8 %), ids uniques. Code de sortie 1 en cas d'échec : le pipeline s'arrête. | `reports/validation.json` (Git) |
+| `featurize` | Échantillon stratifié de 100 000 lignes, suppression des colonnes > 60 % manquantes, `DAYS_EMPLOYED = 365243` → NaN + `DAYS_EMPLOYED_ANOM`, 8 features dérivées. | `data/processed/features.parquet` |
+| `split` | Train/test stratifié 80/20, sans client commun, et fixture CI de 5 000 lignes. | `train.parquet`, `test.parquet`, `tests/fixtures/ci_sample.parquet` (Git) |
+
+Chaque étape déclare les clés de `params.yaml` qu'elle lit : modifier `data.test_size` relance
+uniquement `split`. Les empreintes de toutes les entrées et sorties sont dans `dvc.lock` (commité).
+
+`IS_THIN_FILE = 1` quand au moins 2 des 3 `EXT_SOURCE` manquent, ou qu'aucune demande au bureau
+de crédit n'a été faite dans l'année (`AMT_REQ_CREDIT_BUREAU_YEAR` nul ou manquant) : le client
+est peu connu des bureaux de crédit, c'est la population visée par l'inclusion (~40 % de l'échantillon).
+
+`tests/fixtures/ci_sample.parquet` est commité dans Git (et non dans MinIO) car la CI GitHub ne peut
+pas accéder à MinIO : CI et CML s'entraînent uniquement sur ce fichier.
+
+### 8. Lancer les tests
 
 ```bash
 poetry run pytest

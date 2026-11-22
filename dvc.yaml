@@ -1,0 +1,68 @@
+# CrediScore Inclusion - DVC pipeline.
+# Data stages (validate, featurize, split): Areej. Train/evaluate stages: Achraf.
+#
+# Run from the Poetry environment so `python` finds the crediscore package:
+#   poetry run dvc repro     # reruns only the stages whose inputs changed
+#   poetry run dvc push      # uploads the outputs to MinIO
+#
+# Each stage lists only the params.yaml keys it reads, so changing e.g.
+# data.test_size reruns `split` but not `featurize`.
+
+stages:
+  validate:
+    cmd: python -m crediscore.data.validate
+    deps:
+      - src/crediscore/data/validate.py
+      - src/crediscore/data/schema.py
+      - data/raw/application_train.csv
+    params:
+      - data.raw_path
+      - id_col
+      - target
+      - sensitive_cols
+      - features
+    metrics:
+      # Small JSON, versioned in Git (not in the DVC cache).
+      - reports/validation.json:
+          cache: false
+
+  featurize:
+    cmd: python -m crediscore.data.featurize
+    deps:
+      - src/crediscore/data/featurize.py
+      - src/crediscore/data/sampling.py
+      - src/crediscore/data/schema.py
+      - data/raw/application_train.csv
+      # Makes featurize run after validate (and only on validated data).
+      - reports/validation.json
+    params:
+      - data.raw_path
+      - data.processed_dir
+      - data.sample_size
+      - data.random_state
+      - data.missing_threshold
+      - id_col
+      - target
+      - sensitive_cols
+      - features
+    outs:
+      - data/processed/features.parquet
+
+  split:
+    cmd: python -m crediscore.data.split
+    deps:
+      - src/crediscore/data/split.py
+      - src/crediscore/data/sampling.py
+      - data/processed/features.parquet
+    params:
+      - data.processed_dir
+      - data.test_size
+      - data.random_state
+      - data.ci_sample_size
+      - target
+    outs:
+      - data/processed/train.parquet
+      - data/processed/test.parquet
+      # Committed to Git (GitHub CI cannot reach MinIO), so not cached by DVC.
+      - tests/fixtures/ci_sample.parquet:
+          cache: false

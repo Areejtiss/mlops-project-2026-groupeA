@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "n_rows": 307511,
+  "n_cols": 122,
+  "target_rate": 0.08072881945686496,
+  "checks": [
+    {
+      "name": "shape",
+      "passed": true,
+      "detail": "got 307511 x 122, expected 307511 x 122"
+    },
+    {
+      "name": "required_columns",
+      "passed": true,
+      "detail": "all present"
+    },
+    {
+      "name": "target_binary",
+      "passed": true,
+      "detail": "values: [0, 1]"
+    },
+    {
+      "name": "target_rate",
+      "passed": true,
+      "detail": "0.0807, expected in [0.07, 0.09]"
+    },
+    {
+      "name": "id_unique",
+      "passed": true,
+      "detail": "0 duplicated ids"
+    }
+  ]
+}
