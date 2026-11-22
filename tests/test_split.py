@@ -8,6 +8,7 @@ import pytest
 
 from crediscore.config import Params, load_params
 from crediscore.data.sampling import stratified_sample, stratified_split
+from crediscore.data.featurize import output_columns
 from crediscore.data.split import split, write_ci_sample
 
 PARAMS_FILE = Path(__file__).resolve().parents[1] / "params.yaml"
@@ -99,3 +100,13 @@ def test_ci_sample_too_large_is_refused(tmp_path: Path) -> None:
     big = pd.DataFrame(rng.random((50_000, 5)), columns=list("abcde"))
     with pytest.raises(ValueError, match="1 MB"):
         write_ci_sample(big, tmp_path / "big.parquet")
+
+
+def test_committed_ci_fixture_matches_contract(params: Params) -> None:
+    """The fixture used by CI/CML has the columns of params.yaml, ~8% defaults."""
+    fixture = Path(__file__).resolve().parent / "fixtures" / "ci_sample.parquet"
+    df = pd.read_parquet(fixture)
+    assert len(df) == pytest.approx(params.data.ci_sample_size, abs=2)
+    assert list(df.columns) == output_columns(params)
+    assert df[params.target].mean() == pytest.approx(0.08, abs=0.01)
+    assert df[params.id_col].is_unique
