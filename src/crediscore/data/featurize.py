@@ -31,6 +31,17 @@ DAYS_PER_YEAR = 365.25
 EXT_SOURCES = ["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"]
 # A client is a "thin file" when at least this many external scores are missing.
 THIN_FILE_MIN_MISSING_EXT = 2
+# Raw numeric columns read by the derived features. They are cast to float64
+# first: a one-row API request with a JSON null gives an object column of None.
+RAW_INPUTS = [
+    "AMT_INCOME_TOTAL",
+    "AMT_CREDIT",
+    "AMT_ANNUITY",
+    "DAYS_BIRTH",
+    "DAYS_EMPLOYED",
+    *EXT_SOURCES,
+    "AMT_REQ_CREDIT_BUREAU_YEAR",
+]
 
 
 def safe_divide(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
@@ -70,6 +81,7 @@ def drop_sparse_columns(
 def fix_days_employed(df: pd.DataFrame) -> pd.DataFrame:
     """Replace the 365243 sentinel by NaN and flag it in DAYS_EMPLOYED_ANOM."""
     out = df.copy()
+    out["DAYS_EMPLOYED"] = out["DAYS_EMPLOYED"].astype("float64")  # None -> NaN
     is_anom = out["DAYS_EMPLOYED"] == DAYS_EMPLOYED_SENTINEL
     out["DAYS_EMPLOYED_ANOM"] = is_anom.astype(int)
     out["DAYS_EMPLOYED"] = out["DAYS_EMPLOYED"].mask(is_anom)
@@ -82,6 +94,7 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     Expects DAYS_EMPLOYED to be already fixed (see ``fix_days_employed``).
     """
     out = df.copy()
+    out[RAW_INPUTS] = out[RAW_INPUTS].astype("float64")  # None -> NaN
     # Debt burden and size of the loan relative to income
     out["ANNUITY_INCOME_RATIO"] = safe_divide(
         out["AMT_ANNUITY"], out["AMT_INCOME_TOTAL"]
