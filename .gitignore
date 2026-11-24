@@ -232,3 +232,6 @@ mlruns/
 # data/raw is NOT listed here: `dvc add` writes data/raw/.gitignore itself,
 # which ignores the data files but keeps the small .dvc pointer files visible.
 data/processed/
+
+# Promotion decision, rewritten at every run (models/promote.py)
+/reports/promotion.json
