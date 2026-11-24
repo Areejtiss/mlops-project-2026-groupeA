@@ -232,6 +232,8 @@ def test_monitoring_params_are_loaded() -> None:
     assert monitoring.auc_drop_alert == 0.03
     assert monitoring.alpha == 0.05
     assert monitoring.psi_bins == 10
+    assert monitoring.min_rows == 500
+    assert monitoring.min_labelled == 1000
     assert monitoring.key_features == [
         "AMT_INCOME_TOTAL",
         "AMT_CREDIT",
@@ -251,6 +253,8 @@ def test_monitoring_params_are_loaded() -> None:
         ("alpha", 0),
         ("alpha", 1),
         ("psi_bins", 1),
+        ("min_rows", 1),
+        ("min_labelled", 1),
     ],
 )
 def test_invalid_monitoring_key_is_rejected(
