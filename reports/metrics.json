@@ -26,6 +26,8 @@
       "thin_acceptance_rate": 0.6536362482548547,
       "thin_good_payers_accepted": 4946,
       "scorecard_thin_good_payers_accepted": 0,
+      "thin_good_payer_acceptance_rate": 0.6842833425567239,
+      "thin_accepted_default_rate": 0.03961165048543689,
       "good_payers_accepted": 12928,
       "scorecard_good_payers_accepted": 7982,
       "good_payers_accepted_ratio": 1.6196441994487598,
@@ -83,6 +85,8 @@
       "thin_acceptance_rate": 0.5892879807082118,
       "thin_good_payers_accepted": 4467,
       "scorecard_thin_good_payers_accepted": 0,
+      "thin_good_payer_acceptance_rate": 0.6180132816823465,
+      "thin_accepted_default_rate": 0.037906525953047596,
       "good_payers_accepted": 12078,
       "scorecard_good_payers_accepted": 7611,
       "good_payers_accepted_ratio": 1.5869136775719355,
@@ -159,6 +163,19 @@
         "target": 0.65,
         "met": true,
         "gap": 0.01873065015479869
+      },
+      "thin_file": {
+        "value": 4946,
+        "target": 0,
+        "met": true,
+        "gap": 4946,
+        "companion": {
+          "thin_good_payer_acceptance_rate": 0.6842833425567239,
+          "baseline_thin_good_payer_acceptance_rate": 0.6180132816823465,
+          "thin_accepted_default_rate": 0.03961165048543689,
+          "baseline_thin_accepted_default_rate": 0.037906525953047596,
+          "portfolio_good_payers_ratio_informative": 1.6196441994487598
+        }
       }
     }
   }
