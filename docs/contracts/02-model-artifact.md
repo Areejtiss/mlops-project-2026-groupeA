@@ -11,7 +11,7 @@
 - **Promotion** (`models/promote.py`, T7, D5). Le challenger devient champion si **toutes** ces conditions sont vraies, sur le même jeu récent pour les deux modèles :
   - AUC du challenger ≥ AUC du champion, et ≥ 0,75 ;
   - **sexe** : écart de taux d'acceptation (`ACCEPTE` seulement) entre F et M, `XNA` exclu, ≤ 10 pts, **et** écart d'égalité des chances ≤ 10 pts ;
-  - **âge** (<30, 30-50, ≥50) : écart d'égalité des chances du challenger ≤ celui de la **baseline** LogReg + 2 pts (référence fixe : la baseline recalculée par `evaluate` sur le même jeu de test ; s'applique dès la première promotion, ne dérive pas). Mesurée au lot 3 sur le split de test d'Areej : baseline **38,7 pts**, donc limite **≤ 40,7 pts** (34,9 pts était la valeur provisoire du lot 1, sur un autre split). Pas de seuil absolu ; les deux écarts d'âge sont publiés à chaque évaluation.
+  - **âge** (<30, 30-50, ≥50) : écart d'égalité des chances du challenger ≤ celui de la **baseline** LogReg + 2 pts : l'ancre est l'écart d'égalité des chances selon l'âge de la baseline LogReg, recalculé par `evaluate` sur le jeu d'évaluation qu'on lui donne ; l'écart du challenger doit rester ≤ cette valeur + 2 pts. « Fixe » veut dire liée à la baseline, jamais au champion : elle ne peut pas dériver. Valeur actuelle 38,7 pts, donc limite 40,7 pts (historique : 34,9 pts était la limite provisoire du lot 1, sur un autre split). La règle s'applique dès la première promotion. Pas de seuil absolu ; les deux écarts d'âge sont publiés à chaque évaluation.
 - L'API charge `models:/crediscore@champion`. La « version du modèle » (`model_version`) est le numéro de version du Registry, en chaîne (ex. `"3"`).
 
 ## 2. Flavor et objet exact
@@ -143,6 +143,10 @@ Mesures de `evaluate` sur le split de test d'Areej (20 000 lignes), la baseline 
 
 - Le KPI −15 % se lit uniquement contre cette baseline recalculée (0,352 par dossier), plus contre le chiffre du notebook (0,325 sur un autre split).
 - Équité (D5) : écart selon le sexe 7,7 pts brut / 6,3 pts égalité des chances (baseline 8,4 / 7,0) ; écart d'âge 34,6 / 33,1 pts (baseline 39,7 / 38,7, limite 40,7). D5 respecté.
+- Thin file (D10, 39,4 % du test) : `kpi.targets.thin_file`.
+  - **KPI du SYNOPSIS, lu à la lettre (indicateur de réussite) : atteint.** 4 946 bons payeurs thin file acceptés, contre 0 pour « refus systématique sans historique ».
+  - Compagnons, champion contre baseline : bons payeurs thin file acceptés **68,4 % contre 61,8 %** ; taux de défaut parmi les thin files acceptés **3,96 % contre 3,79 %** (+0,17 pt : « sans augmenter les pertes » tient à 0,2 pt près, pas strictement).
+  - Informatif seulement : ratio des bons payeurs acceptés sur tout le portefeuille contre la scorecard, 1,62 (baseline 1,59).
 
 ## 9. Passation à Iyed : squelette « marchant » (lot 2)
 
