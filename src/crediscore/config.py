@@ -32,6 +32,7 @@ class DataConfig(StrictModel):
     random_state: int = Field(ge=0)
     missing_threshold: float = Field(gt=0, lt=1)
     ci_sample_size: int = Field(gt=0)
+    holdout_size: int = Field(gt=0)
 
     @model_validator(mode="after")
     def ci_sample_smaller_than_sample(self) -> Self:

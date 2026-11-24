@@ -12,6 +12,7 @@ data:
   random_state: 42          # same seed everywhere = reproducible runs
   missing_threshold: 0.6    # drop columns with more than 60% missing values
   ci_sample_size: 5000      # committed fixture used by CI and CML
+  holdout_size: 20000       # labelled rows outside the sample: promotion batch
 
 id_col: SK_ID_CURR          # identifier, never a feature
 target: TARGET              # 1 = payment difficulties (~8% positives)
