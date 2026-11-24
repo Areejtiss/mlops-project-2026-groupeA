@@ -109,6 +109,17 @@ def test_ci_sample_must_be_smaller_than_sample(tmp_path: Path) -> None:
         load_params(path)
 
 
+def test_holdout_size_is_loaded() -> None:
+    assert load_params(PARAMS_FILE).data.holdout_size == 20_000
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_holdout_size_must_be_positive(tmp_path: Path, value: int) -> None:
+    path = write_params(tmp_path, {"data": {"holdout_size": value}})
+    with pytest.raises(ValidationError, match=r"holdout_size\n.*greater than"):
+        load_params(path)
+
+
 def test_lot2_keys_are_loaded() -> None:
     params = load_params(PARAMS_FILE)
     assert params.data.val_size == 0.2
