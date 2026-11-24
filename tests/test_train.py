@@ -424,3 +424,20 @@ def test_tuning_sees_the_excluded_feature_list(
     )
     assert seen["numeric"] == [c for c in params.features.numeric if c != "AGE_YEARS"]
     assert out["metrics"]["model_params"]["n_estimators"] == 20
+
+
+def test_exclude_requires_an_experiment_tag(
+    train_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--params",
+                str(PARAMS_FILE),
+                "--train",
+                str(train_file),
+                "--exclude",
+                "AGE_YEARS",
+            ]
+        )
+    assert "--exclude needs --experiment" in capsys.readouterr().err

@@ -272,3 +272,25 @@ def test_nested_trials_are_not_candidates_and_fields_map_to_validation_metrics(
         0.14,
     )
     assert (c["min_recall"], c["max_review_share"]) == (0.65, 0.15)
+
+
+def test_a_run_with_excluded_features_is_an_experiment_even_untagged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    mlflow.set_tracking_uri(uri)
+    mlflow.set_experiment("crediscore")
+    with mlflow.start_run() as run:
+        mlflow.set_tags({"model_type": "lightgbm", "excluded_features": "AGE_YEARS"})
+        mlflow.log_params({"min_recall": 0.65, "max_review_share": 0.15})
+        mlflow.log_metrics(
+            {
+                "val_roc_auc": 0.8,
+                "val_cost_per_file": 0.3,
+                "val_recall": 0.7,
+                "val_review_share": 0.1,
+            }
+        )
+    c = registry.candidate(mlflow.MlflowClient().get_run(run.info.run_id))
+    assert c["experiment"] == "excluded:AGE_YEARS"
