@@ -39,6 +39,7 @@ def test_main_writes_artifacts_and_logs_an_mlflow_run(
     monkeypatch.chdir(tmp_path)  # mlflow artifacts land under tmp_path
     uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
     monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    mlflow.set_tracking_uri(uri)  # an earlier test set the process-wide URI
     dvc = tmp_path / "data" / "raw" / "application_train.csv.dvc"
     dvc.parent.mkdir(parents=True)
     dvc.write_text("outs:\n- md5: rawmd5\n  path: application_train.csv\n", "utf-8")
