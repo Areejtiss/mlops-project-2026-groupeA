@@ -16,7 +16,6 @@ from crediscore.config import MonitoringConfig, Params, load_params
 from crediscore.models.train import fit_model, prepare_xy
 from crediscore.monitoring import drift
 from crediscore.monitoring.drift import (
-    MIN_POSITIVES,
     REPORT_KEYS,
     auc_drop,
     chi2_test,
@@ -42,6 +41,7 @@ def monitoring() -> MonitoringConfig:
         psi_bins=10,
         min_rows=500,
         min_labelled=1000,
+        min_positives=50,
         key_features=["AMT_INCOME_TOTAL"],
     )
 
@@ -604,14 +604,28 @@ def positives_frame(frame: pd.DataFrame, target: str, positives: int) -> pd.Data
     return out
 
 
-@pytest.mark.parametrize("positives", [MIN_POSITIVES - 1, MIN_POSITIVES])
+@pytest.mark.parametrize("positives", [49, 50])
 def test_auc_drop_needs_min_positives(
     synthetic_frame: pd.DataFrame, params: Params, positives: int
 ) -> None:
-    assert MIN_POSITIVES == 50
+    assert params.monitoring.min_positives == 50
     cur = positives_frame(synthetic_frame.iloc[1000:], params.target, positives)
     drop = auc_drop(ExtSourceModel(), synthetic_frame.iloc[:1000], cur, params)
-    assert (drop is not None) is (positives >= MIN_POSITIVES)
+    assert (drop is not None) is (positives >= 50)
+
+
+def test_auc_drop_follows_the_min_positives_param(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    lenient = params.model_copy(
+        update={
+            "monitoring": params.monitoring.model_copy(update={"min_positives": 10})
+        }
+    )
+    cur = positives_frame(synthetic_frame.iloc[1000:], params.target, 10)
+    ref = synthetic_frame.iloc[:1000]
+    assert auc_drop(ExtSourceModel(), ref, cur, params) is None
+    assert auc_drop(ExtSourceModel(), ref, cur, lenient) is not None
 
 
 def test_auc_drop_with_a_single_class_is_none(

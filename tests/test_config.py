@@ -234,6 +234,7 @@ def test_monitoring_params_are_loaded() -> None:
     assert monitoring.psi_bins == 10
     assert monitoring.min_rows == 500
     assert monitoring.min_labelled == 1000
+    assert monitoring.min_positives == 50
     assert monitoring.key_features == [
         "AMT_INCOME_TOTAL",
         "AMT_CREDIT",
@@ -255,6 +256,7 @@ def test_monitoring_params_are_loaded() -> None:
         ("psi_bins", 1),
         ("min_rows", 1),
         ("min_labelled", 1),
+        ("min_positives", 0),
     ],
 )
 def test_invalid_monitoring_key_is_rejected(
