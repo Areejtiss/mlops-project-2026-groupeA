@@ -10,8 +10,8 @@ parquet, applies the same `decide` to both on test and writes
 - KPI cost vs the baseline = (cost_model - cost_baseline) / cost_baseline,
   and cost vs "accept all";
 - thin file (D10): AUC, acceptance rate, good payers accepted vs the classic
-  scorecard (refuse when EXT_SOURCE_1 and EXT_SOURCE_3 are missing, else our
-  decision);
+  scorecard (refuse every thin file, `IS_THIN_FILE` from
+  `crediscore.data.featurize`, else our decision);
 - fairness (D5, only ACCEPTE counts as accepted, D8): gender (XNA excluded)
   and age band raw and equal-opportunity gaps, and the D5 status: gender
   both gaps <= 10 pts; age equal-opportunity gap <= baseline's + 2 pts;
@@ -125,7 +125,8 @@ def thin_file(
         y: Labels.
         proba: Calibrated probabilities.
         decisions: Our D4 codes.
-        thin: 1 for a thin file (EXT_SOURCE_1 and EXT_SOURCE_3 missing).
+        thin: 1 for a thin file (`IS_THIN_FILE`: at least 2 EXT_SOURCE
+            missing, or AMT_REQ_CREDIT_BUREAU_YEAR NaN or 0).
         costs: cost_fn, cost_fp, cost_review.
 
     Returns:
