@@ -94,6 +94,13 @@ class ThresholdConfig(StrictModel):
         return self
 
 
+class PromotionConfig(StrictModel):
+    """Tolerances of the promotion gate (D5), in percentage points."""
+
+    max_gender_gap_pts: float = Field(ge=0, le=100)
+    age_gap_margin_pts: float = Field(ge=0, le=100)
+
+
 class EconomicCrisisConfig(StrictModel):
     """Intensity of the "economic crisis" drift scenario (multiplicative factors)."""
 
@@ -120,6 +127,7 @@ class Params(StrictModel):
     features: FeaturesConfig
     cost: CostConfig
     threshold: ThresholdConfig
+    promotion: PromotionConfig
     drift: DriftConfig
 
     @model_validator(mode="after")
