@@ -10,9 +10,19 @@ Usage:
     psi(reference["AMT_INCOME_TOTAL"], current["AMT_INCOME_TOTAL"], bins=10)
 """
 
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from typing import Any
+
 import numpy as np
 import pandas as pd
+from scipy import stats
+from sklearn.metrics import roc_auc_score
 
+from crediscore.config import MonitoringConfig, Params
+from crediscore.models.train import prepare_xy
+
+REPORT_KEYS = ("timestamp", "drift_share", "psi", "ks", "chi2", "auc_drop", "alert")
 # Floor of a bin share in the PSI, so that an empty bin gives a finite term.
 EPSILON = 1e-4
 _NAN_BIN = -1
@@ -45,6 +55,18 @@ def _numeric_bins(
     return index(reference), index(current)
 
 
+def _counts(reference: pd.Series, current: pd.Series) -> pd.DataFrame:
+    """Count per value (NaN included) in each batch, 0 where absent."""
+    counts = pd.concat(
+        [
+            reference.value_counts(dropna=False),
+            current.value_counts(dropna=False),
+        ],
+        axis=1,
+    )
+    return counts.fillna(0.0)
+
+
 def psi(reference: pd.Series, current: pd.Series, bins: int = 10) -> float:
     """Population Stability Index of `current` against `reference`.
 
@@ -71,13 +93,158 @@ def psi(reference: pd.Series, current: pd.Series, bins: int = 10) -> float:
         ref_bins, cur_bins = _numeric_bins(reference, current, bins)
     else:
         ref_bins, cur_bins = reference, current
-    shares = pd.concat(
-        [
-            ref_bins.value_counts(normalize=True, dropna=False),
-            cur_bins.value_counts(normalize=True, dropna=False),
-        ],
-        axis=1,
-    )
-    shares = shares.fillna(0.0).clip(lower=EPSILON)
+    counts = _counts(ref_bins, cur_bins)
+    shares = (counts / counts.sum()).clip(lower=EPSILON)
     ref_share, cur_share = shares.iloc[:, 0], shares.iloc[:, 1]
     return float(((cur_share - ref_share) * np.log(cur_share / ref_share)).sum())
+
+
+def ks_test(reference: pd.Series, current: pd.Series) -> float | None:
+    """Two-sample Kolmogorov-Smirnov p-value, on the non-missing values.
+
+    Args:
+        reference: Reference values of a numeric feature.
+        current: Current values of the same feature.
+
+    Returns:
+        The p-value, or None when one side has no value at all (the PSI, which
+        counts missing values, still shows that drift).
+    """
+    ref, cur = reference.dropna(), current.dropna()
+    if ref.empty or cur.empty:
+        return None
+    return float(stats.ks_2samp(ref, cur).pvalue)
+
+
+def chi2_test(reference: pd.Series, current: pd.Series) -> float:
+    """Chi-squared test of independence between batch and category.
+
+    Missing values are a category of their own, and so is a category unseen
+    in the reference.
+
+    Args:
+        reference: Reference values of a categorical feature.
+        current: Current values of the same feature.
+
+    Returns:
+        The p-value; 1.0 when both batches hold a single category.
+    """
+    counts = _counts(reference, current)
+    if len(counts) < 2:
+        return 1.0
+    return float(stats.chi2_contingency(counts.T.to_numpy()).pvalue)
+
+
+def drift_share(p_values: Mapping[str, float | None], alpha: float) -> float:
+    """Share of features whose p-value is strictly below alpha.
+
+    Args:
+        p_values: p-value per model feature (None = untested, not drifted).
+        alpha: Significance level (`monitoring.alpha`).
+
+    Returns:
+        Drifted features / all features, in [0, 1].
+
+    Raises:
+        ValueError: If `p_values` is empty.
+    """
+    if not p_values:
+        raise ValueError("no feature to compute drift_share on")
+    drifted = sum(p is not None and p < alpha for p in p_values.values())
+    return drifted / len(p_values)
+
+
+def is_alert(
+    share: float,
+    psi_values: Mapping[str, float],
+    drop: float | None,
+    config: MonitoringConfig,
+) -> bool:
+    """Alert rule of contract 4.
+
+    Alert when `share` >= `drift_share_alert`, or the PSI of one key feature
+    >= `psi_alert`, or `drop` > `auc_drop_alert` (when the AUC is known).
+
+    Args:
+        share: The batch's drift_share.
+        psi_values: PSI per feature.
+        drop: Reference AUC minus current AUC, or None without labels.
+        config: The `monitoring` parameters.
+
+    Returns:
+        True if the batch must raise the alert (retrain).
+    """
+    return (
+        share >= config.drift_share_alert
+        or any(psi_values[f] >= config.psi_alert for f in config.key_features)
+        or (drop is not None and drop > config.auc_drop_alert)
+    )
+
+
+def auc_drop(
+    model: Any, reference: pd.DataFrame, current: pd.DataFrame, params: Params
+) -> float | None:
+    """Concept drift: reference AUC minus current AUC of the same model.
+
+    Args:
+        model: Fitted classifier with `predict_proba` (contract 2 artifact).
+        reference: Labelled reference batch.
+        current: Current batch, labelled or not.
+        params: Validated parameters (features and target name).
+
+    Returns:
+        The AUC drop (> 0 = the model got worse), or None when the current
+        batch has no label.
+
+    Raises:
+        ValueError: If a labelled batch holds a single class.
+    """
+    if params.target not in current or current[params.target].isna().all():
+        return None
+    aucs = []
+    for batch in (reference, current):
+        X, y = prepare_xy(batch, params)
+        aucs.append(roc_auc_score(y, model.predict_proba(X)[:, 1]))
+    return float(aucs[0] - aucs[1])
+
+
+def compute_drift_report(
+    reference: pd.DataFrame,
+    current: pd.DataFrame,
+    params: Params,
+    *,
+    auc_drop: float | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Drift report of `current` against `reference` (contract 4).
+
+    KS for numeric features, chi2 for categorical ones, PSI for all of them;
+    `drift_share` and the alert follow `params.monitoring`.
+
+    Args:
+        reference: Reference batch with `params.features.all`.
+        current: Current batch with the same columns.
+        params: Validated parameters.
+        auc_drop: Result of `auc_drop`, None without labels.
+        now: Report time; defaults to now. Written in UTC, ISO 8601.
+
+    Returns:
+        A JSON-ready dict with exactly the keys of `REPORT_KEYS`.
+    """
+    cfg = params.monitoring
+    psi_values = {
+        f: psi(reference[f], current[f], cfg.psi_bins) for f in params.features.all
+    }
+    ks = {f: ks_test(reference[f], current[f]) for f in params.features.numeric}
+    chi2 = {f: chi2_test(reference[f], current[f]) for f in params.features.categorical}
+    share = drift_share({**ks, **chi2}, cfg.alpha)
+    stamp = (now or datetime.now(UTC)).astimezone(UTC).isoformat(timespec="seconds")
+    return {
+        "timestamp": stamp,
+        "drift_share": share,
+        "psi": psi_values,
+        "ks": ks,
+        "chi2": chi2,
+        "auc_drop": auc_drop,
+        "alert": is_alert(share, psi_values, auc_drop, cfg),
+    }
