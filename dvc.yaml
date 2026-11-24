@@ -122,7 +122,8 @@ stages:
       - cost
       - threshold.min_recall
       - threshold.max_review_share
-      - promotion
+      - promotion.max_gender_gap_pts
+      - promotion.age_gap_margin_pts
     metrics:
       # Small JSON, versioned in Git (not in the DVC cache).
       - reports/metrics.json:
