@@ -1,8 +1,11 @@
 """Tests for the hand-written PSI (monitoring/drift.py, contract 4).
 
 PSI = sum over bins of (cur% - ref%) * ln(cur% / ref%), each share floored at
-EPSILON. Numeric bins come from the reference quantiles (deduplicated): each
-quantile value is its own bin, and so is each open interval around them.
+EPSILON. Numeric bins are intervals: each edge sits halfway between a
+deduplicated reference quantile and the next distinct reference value, so no
+reference value lies on an edge and a tiny jitter never changes a bin. Two
+open-ended outer bins (half a gap beyond the reference min and max) and a NaN
+bin complete them.
 """
 
 import math
@@ -11,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from crediscore.monitoring.drift import EPSILON, psi
+from crediscore.monitoring.drift import EPSILON, _numeric_edges, psi
 
 
 def term(cur: float, ref: float) -> float:
@@ -35,24 +38,26 @@ def test_identical_categorical_data_gives_zero() -> None:
 
 
 def test_known_numeric_value_by_hand() -> None:
-    # Reference 1, 2, 3, 4 with bins=2: quantiles 0, .5, 1 = 1, 2.5, 4.
-    # Bins: <1 | =1 | (1, 2.5) | =2.5 | (2.5, 4) | =4 | >4 | NaN
-    # Reference shares:  0 | .25 | .25 | 0 | .25 | .25 | 0 | 0
+    # Reference 1, 2, 3, 4 with bins=2: the inner quantile ("lower") is 2 and
+    # the next distinct value 3, so one edge at 2.5. Outer edges: half a gap
+    # beyond the min and the max, 0.5 and 4.5.
+    # Bins:       <0.5 | [0.5, 2.5) | [2.5, 4.5) | >=4.5 | NaN
+    # Reference:     0 |         .5 |         .5 |     0 |   0
     ref = pd.Series([1.0, 2.0, 3.0, 4.0])
-    # Current 0, 2, 2, 5:  .25 | 0 | .5 | 0 | 0 | 0 | .25 | 0
+    assert list(_numeric_edges(ref, 2)) == [0.5, 2.5, 4.5]
+    # Current 0, 2, 2, 5:  .25 | .5 | 0 | .25 | 0
     cur = pd.Series([0.0, 2.0, 2.0, 5.0])
     expected = (
-        term(0.25, 0)  # <1: below the reference minimum
-        + term(0, 0.25)  # =1
-        + term(0.5, 0.25)  # (1, 2.5)
-        + term(0, 0.25)  # (2.5, 4)
-        + term(0, 0.25)  # =4
-        + term(0.25, 0)  # >4: above the reference maximum
+        term(0.25, 0)  # below the reference
+        + term(0.5, 0.5)  # [0.5, 2.5)
+        + term(0, 0.5)  # [2.5, 4.5)
+        + term(0.25, 0)  # above the reference
     )
     assert psi(ref, cur, bins=2) == pytest.approx(expected)
-    # 5 empty-vs-.25 terms of (.25 - 1e-4) * ln(2500) + .25 * ln(2)
-    assert expected == pytest.approx(5 * 0.2499 * math.log(2500) + 0.25 * math.log(2))
-    assert expected == pytest.approx(9.9494, abs=1e-4)
+    # 2 * (.25 - 1e-4) * ln(2500) + (.5 - 1e-4) * ln(5000)
+    assert expected == pytest.approx(
+        2 * 0.2499 * math.log(2500) + 0.4999 * math.log(5000)
+    )
 
 
 def test_known_categorical_value_by_hand() -> None:
@@ -61,6 +66,48 @@ def test_known_categorical_value_by_hand() -> None:
     expected = term(0.75, 0.5) + term(0.25, 0.5)
     assert psi(ref, cur) == pytest.approx(expected)
     assert expected == pytest.approx(0.2747, abs=1e-4)
+
+
+def test_reference_nan_never_enters_the_edges() -> None:
+    values = pd.Series([1.0, 2.0, 3.0, 4.0])
+    with_nan = pd.concat([values, pd.Series([np.nan] * 100)], ignore_index=True)
+    assert list(_numeric_edges(with_nan, 2)) == list(_numeric_edges(values, 2))
+
+
+def test_heaped_column_ignores_a_tiny_jitter() -> None:
+    # Most of the mass sits exactly on a few values, as for incomes.
+    ref = pd.Series(np.repeat([90_000.0, 135_000.0, 180_000.0, 225_000.0], 250))
+    for factor in (1 + 1e-9, 1 - 1e-9):
+        assert psi(ref, ref * factor) == 0.0
+
+
+def test_one_unit_on_a_large_column_gives_almost_zero() -> None:
+    rng = np.random.default_rng(0)
+    heaps = rng.choice([90_000.0, 135_000.0, 180_000.0], size=5000)
+    ref = pd.Series(np.r_[heaps, rng.lognormal(12, 0.5, 5000)])
+    assert psi(ref, ref + 1) < 0.01
+
+
+def test_float32_round_trip_gives_almost_zero() -> None:
+    rng = np.random.default_rng(0)
+    ref = pd.Series(np.r_[rng.lognormal(12, 0.5, 5000), np.full(5000, 135_000.0)])
+    assert psi(ref, ref.astype("float32").astype("float64")) < 0.01
+
+
+def test_crisis_like_scale_shift_gives_a_moderate_psi() -> None:
+    # Incomes x 0.8: a shift of 0.45 standard deviation in log scale.
+    rng = np.random.default_rng(0)
+    ref = pd.Series(rng.lognormal(12, 0.5, 10_000))
+    assert 0.1 < psi(ref, ref * 0.8) < 0.5
+
+
+def test_direction_matters_but_stays_bounded() -> None:
+    rng = np.random.default_rng(0)
+    a = pd.Series(rng.normal(size=10_000))
+    b = pd.Series(rng.normal(loc=0.5, size=10_000))
+    forward, backward = psi(a, b), psi(b, a)
+    assert forward != backward  # the reference sets the bins
+    assert 0.5 < forward / backward < 2
 
 
 def test_empty_bins_stay_finite() -> None:
@@ -74,14 +121,17 @@ def test_empty_bins_stay_finite() -> None:
 def test_constant_column() -> None:
     ref = pd.Series(np.full(50, 3.0))
     assert psi(ref, ref.copy()) == 0.0
-    # A shift above OR below the constant lands in its own bin.
+    # A shift above OR below the constant lands in an outer bin; a 1e-9
+    # jitter stays inside (relative pad 1e-6).
     assert psi(ref, pd.Series(np.full(50, 4.0))) > 1
     assert psi(ref, pd.Series(np.full(50, 2.0))) > 1
+    assert psi(ref, ref * (1 + 1e-9)) == 0.0
 
 
 def test_binary_column_keeps_two_bins() -> None:
-    # Quantiles of a 0/1 column collapse to 0 and 1: deduplicated, not lost.
+    # The deciles of a 0/1 column collapse to 0 and 1: one edge at 0.5.
     ref = pd.Series([0.0] * 80 + [1.0] * 20)
+    assert list(_numeric_edges(ref, 10)) == [-0.5, 0.5, 1.5]
     cur = pd.Series([0.0] * 50 + [1.0] * 50)
     expected = term(0.5, 0.8) + term(0.5, 0.2)
     assert psi(ref, cur) == pytest.approx(expected)
@@ -120,18 +170,6 @@ def test_unseen_category_is_its_own_bin() -> None:
     cur = pd.Series(["a", "b", "z", "z"] * 25)
     expected = term(0.25, 0.5) * 2 + term(0.5, 0)
     assert psi(ref, cur) == pytest.approx(expected)
-
-
-def test_bins_come_from_the_reference() -> None:
-    # PSI is not symmetric: the reference sets the bins.
-    wide = pd.Series(np.linspace(0, 100, 101))
-    narrow = pd.Series(np.linspace(40, 60, 101))
-    forward = psi(wide, narrow)
-    backward = psi(narrow, wide)
-    # From the narrow reference, 40 % of `wide` falls in each open outer bin,
-    # empty in the reference: the backward PSI is the larger one.
-    assert forward == pytest.approx(6.5382, abs=1e-4)
-    assert backward == pytest.approx(8.3004, abs=1e-4)
 
 
 def test_bins_sets_the_number_of_reference_quantiles() -> None:
