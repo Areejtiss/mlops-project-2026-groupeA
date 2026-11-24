@@ -516,6 +516,8 @@ Accept all: 0.4037 per file. Each tuned run has its 25 nested trial runs (checke
 - Also found: with the new `--exclude` guard, the old unknown-column test exited on that guard instead (reviewer mutant #62 survived). The test now passes `--experiment`.
 - **Reviewer's `mutate.py` replayed** on a `git archive` copy of `3a06add`. Unmutated suites first: full suite 340 passed, 8 skipped; reviewer test list 118 passed. Result: **65 mutants, 61 killed, 1 survived (#62, fixed above), 3 skipped** (#33, #40, #41: their lines changed). Follow-up run with the fixed test: #62 killed; the 3 skipped mutants, adapted to the new lines, killed; 6 new mutants on the new code killed (10 of 10). Final checks: black, flake8, mypy strict green; 348 tests; coverage 93 %. Logs: `scratchpad/lot3/reviewer_replay.log` and `scratchpad/lot3/reviewer_replay_extra.log` of the session.
 
+**Review round 2: ready; 86 mutants, 81 killed, 5 survivors (2 equivalent, 3 covered by these tests)**: `run_config` with `test_size != val_size` (#69), `registry --select` with another `--params` file (#72), the thin-file portfolio ratio companion taken from the model, not the baseline (#84).
+
 ### Lot 4 — S5: SHAP, fairness, promotion (Jalon 3) · branch `feature/explainability-fairness` · ~10 h incl. 2 review rounds (promotion is critical)
 
 **Depends on:** lot 3 and D5.
