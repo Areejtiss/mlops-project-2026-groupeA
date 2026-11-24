@@ -103,4 +103,8 @@ def test_evaluate_tracks_the_fairness_audit_and_the_promotion_tolerances(
 ) -> None:
     ev = stages["evaluate"]
     assert "src/crediscore/fairness/audit.py" in ev["deps"]
-    assert "promotion" in ev["params"]
+    assert {
+        "promotion.max_gender_gap_pts",
+        "promotion.age_gap_margin_pts",
+    } <= set(ev["params"])
+    assert "promotion" not in ev["params"]  # min_rows is not read by evaluate
