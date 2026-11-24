@@ -17,21 +17,22 @@ def frame(gender: list[object], age: list[float], target: list[int]) -> pd.DataF
 def test_hand_made_frame_with_known_gaps() -> None:
     # F: 4 rows, accepted 3 (raw 0.75); good payers 3, accepted 2 (EO 2/3);
     #    1 default, accepted (recall 0.0).
-    # M: 4 rows, accepted 1 (raw 0.25); good payers 2, accepted 0 (EO 0);
-    #    2 defaults: one accepted, one in review (recall 0.5).
+    # M: 4 rows, accepted 0 (raw 0.0); good payers 2, accepted 0 (EO 0);
+    #    2 defaults, both in review (recall 1.0).
+    # The three gaps differ (75, 66.7, 100): none can stand in for another.
     df = frame(
         ["F", "F", "F", "F", "M", "M", "M", "M"],
         [25.0, 35.0, 55.0, 45.0, 25.0, 35.0, 55.0, 29.0],
         [0, 0, 0, 1, 0, 0, 1, 1],
     )
-    d = np.array([A, A, R, A, R, V, A, V])
+    d = np.array([A, A, R, A, R, V, V, V])
     g = audit(df, d, target="TARGET")["gender"]
-    assert g["acceptance_by_group"] == pytest.approx({"F": 0.75, "M": 0.25})
-    assert g["raw_gap_pts"] == pytest.approx(50.0)
+    assert g["acceptance_by_group"] == pytest.approx({"F": 0.75, "M": 0.0})
+    assert g["raw_gap_pts"] == pytest.approx(75.0)
     assert g["acceptance_good_payers_by_group"] == pytest.approx({"F": 2 / 3, "M": 0})
     assert g["eo_gap_pts"] == pytest.approx(100 * 2 / 3)
-    assert g["recall_by_group"] == pytest.approx({"F": 0.0, "M": 0.5})
-    assert g["recall_gap_pts"] == pytest.approx(50.0)
+    assert g["recall_by_group"] == pytest.approx({"F": 0.0, "M": 1.0})
+    assert g["recall_gap_pts"] == pytest.approx(100.0)
     assert g["excluded_rows"] == 0
 
 

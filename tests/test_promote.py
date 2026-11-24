@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 from sklearn.metrics import roc_auc_score
 
-from crediscore.config import PromotionConfig, load_params
+from crediscore.config import Params, PromotionConfig, load_params
 from crediscore.models import promote as pr
 from crediscore.models import train as train_module
 from crediscore.models.evaluate import load_model
@@ -379,3 +379,20 @@ def test_decision_json_fields(store: Path, tmp_path: Path) -> None:
     assert decision["age_anchor_pts"] == 38.7
     assert decision["data"] == str(store / "heldout.parquet")
     assert decision["data_md5"] == train_module.file_md5(store / "heldout.parquet")
+
+
+def test_score_audits_the_decisions_taken_with_the_model_thresholds(
+    params: Params,
+) -> None:
+    df = pd.DataFrame(
+        {
+            "TARGET": [0, 0, 0, 0],
+            "CODE_GENDER": ["F", "F", "M", "M"],
+            "AGE_YEARS": [25.0, 40.0, 25.0, 60.0],
+        }
+    )
+    # low 0.1, high 0.2: ACCEPTE, A_ETUDIER, ACCEPTE, REFUSE.
+    out = pr.score(df, [0.05, 0.15, 0.05, 0.25], {"low": 0.1, "high": 0.2}, params)
+    gender = out["fairness"]["gender"]["acceptance_by_group"]
+    assert gender == pytest.approx({"F": 0.5, "M": 0.5})
+    assert out["review_share"] == 0.25
