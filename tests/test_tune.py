@@ -66,3 +66,29 @@ def test_untunable_model_is_rejected(
 ) -> None:
     with pytest.raises(ValueError, match="no search space for 'logreg'"):
         run("logreg", params, synthetic_frame, 2)
+
+
+def test_cv_is_5_fold_stratified_seeded_and_keeps_the_imbalance_weight(
+    params: Params, synthetic_frame: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import numpy as np
+
+    from crediscore.models import tune as tune_module
+
+    seen: list[tuple[object, object]] = []
+
+    def fake_cv(pipe: object, X: object, y: object, *, cv: object, scoring: str):
+        seen.append((pipe, cv))
+        return np.array([0.7] * 5)
+
+    monkeypatch.setattr(tune_module, "cross_val_score", fake_cv)
+    run("xgboost", params, synthetic_frame, 1)
+    ((pipe, cv),) = seen
+    assert (cv.n_splits, cv.shuffle, cv.random_state) == (
+        5,
+        True,
+        params.data.random_state,
+    )
+    y = synthetic_frame[params.target]
+    weight = pipe.named_steps["model"].get_params()["scale_pos_weight"]
+    assert weight == pytest.approx((y == 0).sum() / (y == 1).sum())

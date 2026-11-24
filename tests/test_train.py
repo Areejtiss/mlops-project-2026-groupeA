@@ -407,3 +407,20 @@ def test_accept_all_cost_counts_probabilities_of_exactly_one(
     assert result["metrics"]["accept_all_cost_per_file"] == pytest.approx(
         params.cost.cost_fn * y_val.mean()
     )
+
+
+def test_tuning_sees_the_excluded_feature_list(
+    params: Params, synthetic_frame: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_tune(X: object, y: object, name: str, **kw: object):
+        seen.update(kw)
+        return {"n_estimators": 20}, 0.7
+
+    monkeypatch.setattr(train_module, "tune", fake_tune)
+    out = train_module.train(
+        synthetic_frame, "lightgbm", params, exclude=("AGE_YEARS",), n_trials=1
+    )
+    assert seen["numeric"] == [c for c in params.features.numeric if c != "AGE_YEARS"]
+    assert out["metrics"]["model_params"]["n_estimators"] == 20

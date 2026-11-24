@@ -314,3 +314,68 @@ def test_main_on_a_registry_uri_uses_the_version_thresholds(
     assert m["model_uri"] == "models:/crediscore@champion"
     _, by_number = ev.load_model(f"models:/crediscore/{version.version}")
     assert by_number == th
+
+
+# --- lot 3 mutation survivors ------------------------------------------------
+
+
+def test_report_accept_all_accepts_probabilities_of_exactly_one(
+    params: Params,
+) -> None:
+    df = pd.DataFrame(
+        {
+            "TARGET": [1, 0, 0, 1],
+            "IS_THIN_FILE": [0, 1, 0, 1],
+            "CODE_GENDER": ["F", "M", "F", "M"],
+            "AGE_YEARS": [25.0, 40.0, 60.0, 35.0],
+        }
+    )
+    out = ev.report(df, [1.0, 0.2, 0.1, 0.9], 0.5, 0.95, params)
+    # "accept all" accepts even proba 1.0: both defaults are missed.
+    assert out["accept_all_cost_per_file"] == pytest.approx(2 * 5 / 4)
+
+
+def test_main_scores_the_model_and_a_logreg_baseline_with_its_own_thresholds(
+    tmp_path: Path,
+    split_files: tuple[Path, Path],
+    params: Params,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sklearn.metrics import roc_auc_score
+
+    from crediscore.models import train as train_module
+
+    train, test = split_files
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    model_dir = tmp_path / "lgbm"
+    common = ["--params", str(PARAMS_FILE), "--train", str(train)]
+    train_module.main([*common, "--model", "lightgbm", "--output-dir", str(model_dir)])
+    calls: list[tuple[str, dict]] = []
+
+    def spy(df: pd.DataFrame, name: str, p: Params, **kw: object) -> dict:
+        result = train_module.train(df, name, p, **kw)
+        calls.append((name, result))
+        return result
+
+    monkeypatch.setattr(ev, "train", spy)
+    out = tmp_path / "metrics.json"
+    ev.main(
+        [*common, "--model", str(model_dir), "--test", str(test), "--output", str(out)]
+    )
+    m = json.loads(out.read_text(encoding="utf-8"))
+    ((name, base),) = calls
+    assert name == "logreg"
+    assert m["baseline"]["thresholds"] == {
+        "low": base["thresholds"]["low"],
+        "high": base["thresholds"]["high"],
+    }
+    test_df = pd.read_parquet(test)
+    X, y = train_module.prepare_xy(test_df, params)
+    model, _ = ev.load_model(str(model_dir))
+    assert m["model"]["roc_auc"] == pytest.approx(
+        roc_auc_score(y, model.predict_proba(X)[:, 1])
+    )
+    assert m["baseline"]["roc_auc"] == pytest.approx(
+        roc_auc_score(y, base["model"].predict_proba(X)[:, 1])
+    )

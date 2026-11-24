@@ -235,3 +235,40 @@ def test_no_experiment_means_no_candidate(
     monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
     mlflow.set_tracking_uri(uri)
     assert registry.training_runs(mlflow.MlflowClient(), "any") == []
+
+
+# --- lot 3 mutation survivors ------------------------------------------------
+
+
+def test_nested_trials_are_not_candidates_and_fields_map_to_validation_metrics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    mlflow.set_tracking_uri(uri)
+    mlflow.set_experiment("crediscore")
+    tags = {"model_type": "lightgbm", "train_data_hash": "h"}
+    metrics = {
+        "val_roc_auc": 0.71,
+        "val_pr_auc": 0.21,
+        "val_cost_per_file": 0.31,
+        "val_recall": 0.66,
+        "val_review_share": 0.14,
+    }
+    with mlflow.start_run(run_name="parent") as parent:
+        mlflow.set_tags(tags)
+        mlflow.log_params({"min_recall": 0.65, "max_review_share": 0.15})
+        mlflow.log_metrics(metrics)
+        with mlflow.start_run(run_name="trial-0", nested=True):
+            mlflow.set_tags(tags)
+            mlflow.log_metrics({**metrics, "val_cost_per_file": 0.01})
+    runs = registry.training_runs(mlflow.MlflowClient(), "h")
+    assert [r.info.run_id for r in runs] == [parent.info.run_id]
+    c = registry.candidate(runs[0])
+    assert (c["roc_auc"], c["cost_per_file"], c["recall"], c["review_share"]) == (
+        0.71,
+        0.31,
+        0.66,
+        0.14,
+    )
+    assert (c["min_recall"], c["max_review_share"]) == (0.65, 0.15)
