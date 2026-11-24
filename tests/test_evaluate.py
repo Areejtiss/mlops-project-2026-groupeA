@@ -481,5 +481,5 @@ def test_registry_version_follows_the_alias_and_the_number(
         mlflow.register_model(f"runs:/{run.info.run_id}/model", "crediscore")
     mlflow.MlflowClient().set_registered_model_alias("crediscore", "champion", "2")
     champion = ev.registry_version("models:/crediscore@champion")
-    assert (champion.version, champion.run_id) == ("2", run.info.run_id)
-    assert ev.registry_version("models:/crediscore/1").version == "1"
+    assert (str(champion.version), champion.run_id) == ("2", run.info.run_id)
+    assert str(ev.registry_version("models:/crediscore/1").version) == "1"
