@@ -96,3 +96,11 @@ def test_stages_depend_on_every_module_they_import(
     expected.add("src/crediscore/config.py")
     assert expected <= imported
     assert expected <= set(stages[name]["deps"])
+
+
+def test_evaluate_tracks_the_fairness_audit_and_the_promotion_tolerances(
+    stages: dict[str, Any],
+) -> None:
+    ev = stages["evaluate"]
+    assert "src/crediscore/fairness/audit.py" in ev["deps"]
+    assert "promotion" in ev["params"]
