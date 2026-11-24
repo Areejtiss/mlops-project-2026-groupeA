@@ -110,7 +110,7 @@ def test_chi2_two_categories_uses_the_yates_correction() -> None:
     expected = np.array([[25, 15], [25, 15]])
     yates = (((np.abs(observed - expected) - 0.5) ** 2) / expected).sum()
     assert chi2_test(ref, cur) == pytest.approx(stats.chi2.sf(yates, df=1))
-    assert chi2_test(ref, cur) == pytest.approx(0.0647, abs=1e-4)
+    assert chi2_test(ref, cur) == pytest.approx(0.0377, abs=1e-4)  # 0.021 raw
 
 
 @pytest.mark.parametrize(
@@ -570,25 +570,19 @@ def test_cli_without_model_has_null_auc_drop(
     assert len(list(tmp_path.glob("*.html"))) == 1
 
 
-def with_min_labelled(params: Params, n: int) -> Params:
-    monitoring = params.monitoring.model_copy(update={"min_labelled": n})
-    return params.model_copy(update={"monitoring": monitoring})
-
-
 def test_auc_drop_uses_the_labelled_rows_only(
     synthetic_frame: pd.DataFrame, params: Params
 ) -> None:
-    small = with_min_labelled(params, 400)
-    ref, cur = synthetic_frame.iloc[:1000].copy(), synthetic_frame.iloc[1000:].copy()
-    labelled = cur.iloc[::2]
+    ref, cur = synthetic_frame.copy(), synthetic_frame.copy()
+    labelled = cur.iloc[::2]  # 1 000 rows, about 80 defaults
     cur.loc[cur.index[1::2], params.target] = np.nan  # feedback not back yet
     model = ExtSourceModel()
-    expected = auc_drop(model, ref, labelled, small)
+    expected = auc_drop(model, ref, labelled, params)
     assert expected is not None
-    assert auc_drop(model, ref, cur, small) == pytest.approx(expected)
+    assert auc_drop(model, ref, cur, params) == pytest.approx(expected)
     ref.loc[ref.index[:5], params.target] = np.nan  # reference too
-    assert auc_drop(model, ref, cur, small) == pytest.approx(
-        auc_drop(model, ref.iloc[5:], labelled, small)
+    assert auc_drop(model, ref, cur, params) == pytest.approx(
+        auc_drop(model, ref.iloc[5:], labelled, params)
     )
 
 
