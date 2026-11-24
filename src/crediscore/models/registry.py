@@ -2,9 +2,10 @@
 
 Selection (validation only, the test split is never read here):
 - candidates: finished top-level `train` runs of experiment `crediscore`
-  trained on the same file (`train_data_hash` = md5 of `--train`), whose
-  thresholds meet the D3/D8 constraints (recall >= min_recall, review share
-  <= max_review_share);
+  trained on the same file (`train_data_hash` = md5 of `--train`, filtered
+  in the MLflow query) with the same costs, constraints and val_size as
+  `--params`, whose thresholds meet the D3/D8 constraints (recall >=
+  min_recall, review share <= max_review_share);
 - keep those with validation ROC-AUC >= 0.75 if any reaches it;
 - the best is the lowest validation cost per file, ties broken by ROC-AUC.
 A winner tagged `experiment` (e.g. the D5 `no_age` run), or trained with
@@ -29,6 +30,7 @@ import mlflow
 from mlflow.entities import Run
 from mlflow.tracking import MlflowClient
 
+from crediscore.config import Params, load_params
 from crediscore.models.train import EXPERIMENT, file_md5
 
 MODEL_NAME = "crediscore"
@@ -42,31 +44,64 @@ REQUIRED_TAGS = (
     "train_data_hash",
 )
 VERSION_TAGS = (*REQUIRED_TAGS, "raw_data_hash", "git_sha")
+# Run params that must equal params.yaml: costs and constraints of the
+# thresholds, and the validation carve-out the metrics were measured on.
+CONFIG_PARAMS = (
+    "cost_fn",
+    "cost_fp",
+    "cost_review",
+    "min_recall",
+    "max_review_share",
+    "val_size",
+)
+
+
+def run_config(params: Params) -> dict[str, float]:
+    """The `CONFIG_PARAMS` values of the current params.yaml."""
+    return {
+        "cost_fn": params.cost.cost_fn,
+        "cost_fp": params.cost.cost_fp,
+        "cost_review": params.cost.cost_review,
+        "min_recall": params.threshold.min_recall,
+        "max_review_share": params.threshold.max_review_share,
+        "val_size": params.data.val_size,
+    }
 
 
 def select_run(
-    candidates: list[dict[str, Any]], min_auc: float = MIN_AUC
+    candidates: list[dict[str, Any]],
+    config: dict[str, float],
+    min_auc: float = MIN_AUC,
 ) -> dict[str, Any]:
     """Pick the run to register (L3-1).
 
     Args:
         candidates: One dict per run: run_id, roc_auc, cost_per_file, recall,
-            review_share, min_recall, max_review_share (validation values).
+            review_share, min_recall, max_review_share (validation values)
+            and config (its logged `CONFIG_PARAMS`).
+        config: `run_config(params)`: runs logged with other values (costs,
+            constraints, val_size) are not comparable and are left out.
         min_auc: AUC floor, applied only if at least one feasible run reaches it.
 
     Returns:
         The chosen candidate.
 
     Raises:
-        ValueError: If no candidate meets the recall and review constraints.
+        ValueError: If no candidate matches `config` and meets the recall and
+            review constraints.
     """
     feasible = [
         c
         for c in candidates
-        if c["recall"] >= c["min_recall"] and c["review_share"] <= c["max_review_share"]
+        if c["config"] == config
+        and c["recall"] >= c["min_recall"]
+        and c["review_share"] <= c["max_review_share"]
     ]
     if not feasible:
-        raise ValueError("no candidate run meets the recall and review constraints")
+        raise ValueError(
+            "no candidate run matches params.yaml and meets the recall and "
+            "review constraints"
+        )
     pool = [c for c in feasible if c["roc_auc"] >= min_auc] or feasible
     return min(pool, key=lambda c: (c["cost_per_file"], -c["roc_auc"]))
 
@@ -84,6 +119,7 @@ def candidate(run: Run) -> dict[str, Any]:
         "review_share": m["val_review_share"],
         "min_recall": float(p["min_recall"]),
         "max_review_share": float(p["max_review_share"]),
+        "config": {k: float(p[k]) if k in p else None for k in CONFIG_PARAMS},
         # A run without some features is an experiment even if untagged.
         "experiment": t.get("experiment")
         or (f"excluded:{excluded}" if excluded else None),
@@ -96,15 +132,17 @@ def training_runs(client: MlflowClient, train_data_hash: str) -> list[Run]:
     if exp is None:
         return []
     runs = client.search_runs(
-        [exp.experiment_id], filter_string="attributes.status = 'FINISHED'"
+        [exp.experiment_id],
+        filter_string=(
+            "attributes.status = 'FINISHED'"
+            f" and tags.train_data_hash = '{train_data_hash}'"
+            " and tags.`mlflow.parentRunId` IS NULL"
+        ),
     )
     return [
         r
         for r in runs
-        if "mlflow.parentRunId" not in r.data.tags
-        and "model_type" in r.data.tags
-        and r.data.tags.get("train_data_hash") == train_data_hash
-        and "val_cost_per_file" in r.data.metrics
+        if "model_type" in r.data.tags and "val_cost_per_file" in r.data.metrics
     ]
 
 
@@ -148,6 +186,7 @@ def main(argv: list[str] | None = None) -> None:
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("--select", action="store_true", help="apply L3-1")
     which.add_argument("--run-id", help="register this run as is")
+    parser.add_argument("--params", type=Path, default=Path("params.yaml"))
     parser.add_argument(
         "--train", type=Path, default=Path("data/processed/train.parquet")
     )
@@ -166,7 +205,7 @@ def main(argv: list[str] | None = None) -> None:
                 f"review {c['review_share']:.3f}"
             )
         try:
-            best = select_run(cands)
+            best = select_run(cands, run_config(load_params(args.params)))
         except ValueError as err:
             raise SystemExit(str(err)) from err
         print(f"selected {best['run_name']} {best['run_id']}")
