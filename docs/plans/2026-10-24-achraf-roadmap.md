@@ -656,14 +656,15 @@ Stop point: a short review before it is wired into Prefect.
 - **After review (NOT READY, 1 blocking, 4 important, 10 minor):**
   - **B1** PSI interval bins: edges halfway between each deduplicated reference quantile and the next distinct reference value, NaN bin and open-ended outer bins kept, 0/1 columns at 2 bins.
   - **I1** auc_drop `null` when a labelled batch holds fewer than 2 classes.
-  - **I2** `monitoring.min_rows: 500` (below: PSI/KS/χ² published, but drift_share and PSI do not raise the alert) and `monitoring.min_labelled: 1000` (below, or fewer than 50 positives: auc_drop `null`).
+  - **I2** `monitoring.min_rows: 500` (below: PSI/KS/χ² published, but drift_share and PSI do not raise the alert) and `monitoring.min_labelled: 1000` (below, or fewer than `monitoring.min_positives: 50` positives: auc_drop `null`). `min_positives` moved from a module constant to `params.yaml` on the coordinator's request (`ge=1`, tested, for Areej's review).
+  - The constant-column PSI pad, 1e-6 × max(|c|, 1), stays a documented module constant (`_CONSTANT_PAD` in `drift.py`): an implementation detail of the binning, not a tuning knob.
   - **I3** Prometheus alerts on an `alert` gauge (0/1) and an `auc_drop` gauge; per-feature rules, if any, only on `psi{feature=~"<key_features>"}`; no new JSON key.
   - **Minor 1** a feature empty on one side only counts as drifted (KS p = 0); `null` only when both sides are empty. **Minor 2** empty batch → `ValueError("empty batch…")`. **Minor 3** naive `now` → `ValueError`; timestamp without microseconds.
 
 **Lot 5 status (2026-11-24): implemented, reviewed NOT READY, correction pass done; awaiting re-review.** Branch `feature/drift-detection`, built on lot 3 in progress (rebase on lot 3's final tip pending).
 - [x] 1. Contract 4 written and revised (`docs/contracts/04-drift-report.md`, French), **proposal for Areej and Iyed**.
-- [x] 2. `monitoring/drift.py`: `psi`, `ks_test`, `chi2_test`, `drift_share`, `is_alert`, `auc_drop`, `compute_drift_report`, `write_html`, CLI `main`. `monitoring:` in `params.yaml` + `MonitoringConfig` with `min_rows` and `min_labelled` (each key feature must be a model feature), "(for Areej's review)".
-- [x] 3. Tests: `tests/test_psi.py` (25), `tests/test_drift.py` (59), 13 new in `test_config.py`.
+- [x] 2. `monitoring/drift.py`: `psi`, `ks_test`, `chi2_test`, `drift_share`, `is_alert`, `auc_drop`, `compute_drift_report`, `write_html`, CLI `main`. `monitoring:` in `params.yaml` + `MonitoringConfig` with `min_rows`, `min_labelled` and `min_positives` (each key feature must be a model feature), "(for Areej's review)".
+- [x] 3. Tests: `tests/test_psi.py` (25), `tests/test_drift.py` (60), 14 new in `test_config.py`.
 - [x] 4. Evidently 0.7.23 HTML + JSON + `latest.json`; DVC stage `detect_drift`; `/reports/drift/` git-ignored. `latest.json` carries a timestamp: a **non-reproducible** output, uncached, git-ignored, regenerated at each run. Deps include `config.py`, `models/evaluate.py` (`load_model`) and `models/train.py` (`prepare_xy`).
 - [x] 5. Concept drift: `auc_drop(model, reference, current, params)` on the labelled rows of both batches; `null` when not computable (I1, I2).
 - Real runs, after B1 (a local LightGBM copied to `models/lightgbm`, see the caveat below; test = 20 000 rows). Old → new where it changed:
@@ -680,7 +681,7 @@ Stop point: a short review before it is wired into Prefect.
   - `compute_drift_report(reference, current, params, *, auc_drop=None, now=None)` instead of `labels=None`: the AUC needs the model, so the caller computes `auc_drop` first (core stays pure). It also rejects a non-finite `auc_drop` (found by the reviewer's p4 probe).
   - PSI bins (B1): inner edges halfway between each inner reference quantile (method `lower`, so a reference value) and the next distinct reference value; outer edges half a gap beyond the min and the max; a constant column gets a ±1e-6·max(|c|, 1) bin; a value on an edge goes to the upper bin. The **dedup** of quantiles was cosmetic with the old point bins (`searchsorted` gave the same partition); now it merges the deciles that fall on one heaped value into a single edge, so a 0/1 column has one edge (0.5) and two value bins. Epsilon 1e-4 floors each share. NaN always has its own bin.
   - `ks` and `chi2` hold **p-values**. χ² keeps scipy's default Yates correction (2 categories), pinned by a test.
-  - `MIN_POSITIVES = 50` is a module constant, not a `params.yaml` key (the decision named only `min_rows` and `min_labelled`); moving it to `monitoring:` is a one-line PR if Areej prefers.
+  - `monitoring.min_positives: 50` is a `params.yaml` key (it was a module constant until the coordinator's last request).
   - Evidently's "chi-square" is a goodness-of-fit test against the reference proportions; ours is the two-sample independence test. Test vs test, Evidently flags 3 categoricals, we flag none. On numerics both agree (tested).
   - **`dvc.lock` data entries are stale** since the featurize float64-cast commit (awaiting Areej's review): `dvc repro` re-runs validate/featurize/split, whose outputs are equal in content (the md5s differ through pyarrow/line-ending artifacts). They are restored with `git checkout` and `dvc.lock` is not committed for `detect_drift`; `dvc repro -s detect_drift` runs the stage alone.
   - The model is a local artifact of 2026-10-25 (`crediscore-lot2/models/lightgbm`), trained before Areej's current split: AUC 0.816 on today's test ≈ 0.820 on today's train, vs 0.754 on its own validation, so its training rows likely overlap today's test. The AUC **levels** are not meaningful; the **drops** are. Re-run with lot 3's final champion once rebased.
@@ -692,7 +693,7 @@ Stop point: a short review before it is wired into Prefect.
   - Own set before the review: 41 mutants, round 1 38 killed / 3 survived, round 2 39/39 (`scratchpad/lot5/mutation_drift.log`, `mutation_drift_round2.log`). **That "0 survivors" was the implementer's own set only:** the reviewer's set (44 mutants, `rl5/probes/mutation.log`) had **12 survivors, 3 of them equivalent** (#05 no dedup, #12 dtype from current, #13 categorical swap).
   - Reviewer's `mutate.py` replayed from a copy on the corrected HEAD (`scratchpad/lot5/fix/mutation_reviewer_replay.log`, 122 passed unmutated): **38 valid, 36 killed, 2 survived** (#12 and #13, equivalent: categorical PSI is symmetric in its terms, and both inputs share a dtype), 6 invalid (lines rewritten by the fix).
   - Own correction-pass set (`scratchpad/lot5/fix/mutate_v2.py`): round 1 (`mutation_own_v2.log`, 122 passed unmutated): **43 valid, 41 killed, 2 survived** (constant pad without `max(…, 1)`, edge side `left`), both killed by two new tests. Round 2 on the final HEAD (`mutation_own_v2_round2.log`, 124 passed unmutated): **43 valid, 43 killed, 0 survived**.
-- Checks: black, flake8 and mypy clean; **423 tests pass** (326 before the lot), coverage 93 %, `drift.py` 99 % (the `__main__` line), `config.py` 100 %.
+- Checks: black, flake8 and mypy clean; **425 tests pass** (326 before the lot), coverage 93 %, `drift.py` 99 % (the `__main__` line), `config.py` 100 %.
 
 ### Lot 6 — S7: closing the loop (with Areej) · ~6 h
 
