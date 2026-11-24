@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from evidently import DataDefinition, Dataset, Report
 from evidently.presets import DataDriftPreset
@@ -42,30 +43,46 @@ REPORT_KEYS = ("timestamp", "drift_share", "psi", "ks", "chi2", "auc_drop", "ale
 # Floor of a bin share in the PSI, so that an empty bin gives a finite term.
 EPSILON = 1e-4
 _NAN_BIN = -1
+# Half-width of the single bin of a constant column, relative to its value.
+_CONSTANT_PAD = 1e-6
+
+
+def _numeric_edges(reference: pd.Series, bins: int) -> npt.NDArray[np.float64]:
+    """Bin edges from the reference, none of them on a reference value.
+
+    Inner edges sit halfway between each inner quantile ("lower" method, so a
+    reference value) and the next distinct reference value; deduplicating
+    the quantiles merges the deciles that fall on the same heaped value into
+    one edge (a 0/1 column gets one edge, at 0.5). Outer edges sit half a gap
+    beyond the min and the max, so values outside the reference range get
+    their own open-ended bins. A constant column is padded by 1e-6 relative.
+    """
+    ref = reference.dropna().to_numpy(dtype=float)
+    values = np.unique(ref)
+    if values.size == 0:
+        return np.array([], dtype=float)
+    if values.size == 1:
+        pad = _CONSTANT_PAD * max(abs(values[0]), 1.0)
+        return np.array([values[0] - pad, values[0] + pad])
+    inner = np.unique(
+        np.quantile(ref, np.linspace(0, 1, bins + 1)[1:-1], method="lower")
+    )
+    inner = inner[inner < values[-1]]  # the max has no next value
+    following = values[np.searchsorted(values, inner, side="right")]
+    low = values[0] - (values[1] - values[0]) / 2
+    high = values[-1] + (values[-1] - values[-2]) / 2
+    return np.unique(np.r_[low, (inner + following) / 2, high])
 
 
 def _numeric_bins(
     reference: pd.Series, current: pd.Series, bins: int
 ) -> tuple[pd.Series, pd.Series]:
-    """Bin index of every value, from the deduplicated reference quantiles.
-
-    Each quantile value is its own bin, and so is each open interval between
-    two of them, plus the two open-ended outer intervals: a 0/1 column keeps
-    a bin for 0 and one for 1, and a constant column separates "below" from
-    "above". Missing values get their own bin.
-    """
-    ref = reference.dropna().to_numpy(dtype=float)
-    cuts = (
-        np.unique(np.quantile(ref, np.linspace(0, 1, bins + 1)))
-        if ref.size
-        else np.array([])
-    )
+    """Bin index of every value (see `_numeric_edges`); NaN has its own bin."""
+    edges = _numeric_edges(reference, bins)
 
     def index(s: pd.Series) -> pd.Series:
         x = s.to_numpy(dtype=float)
-        idx = np.searchsorted(cuts, x, side="left") + np.searchsorted(
-            cuts, x, side="right"
-        )
+        idx = np.searchsorted(edges, x, side="right")
         return pd.Series(np.where(np.isnan(x), _NAN_BIN, idx))
 
     return index(reference), index(current)
@@ -88,7 +105,7 @@ def psi(reference: pd.Series, current: pd.Series, bins: int = 10) -> float:
 
     PSI = sum over bins of (cur% - ref%) * ln(cur% / ref%), each share floored
     at EPSILON. Numeric columns are binned on the reference quantiles
-    (see `_numeric_bins`); other columns use one bin per category, a category
+    (see `_numeric_edges`); other columns use one bin per category, a category
     unseen in the reference included. Missing values are a bin of their own.
     The reference sets the bins, so psi(a, b) != psi(b, a) in general.
 
