@@ -463,3 +463,23 @@ def test_main_scores_the_model_and_a_logreg_baseline_with_its_own_thresholds(
 def test_flatten_keeps_numeric_leaves_including_ints_and_bools() -> None:
     d = {"a": 1, "b": True, "c": {"d": 2.5, "e": None, "f": "x"}, "<30": 3}
     assert ev.flatten(d, "p_") == {"p_a": 1.0, "p_b": 1.0, "p_c.d": 2.5, "p_lt30": 3.0}
+
+
+def test_registry_version_follows_the_alias_and_the_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sklearn.dummy import DummyClassifier
+
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    monkeypatch.chdir(tmp_path)
+    mlflow.set_tracking_uri(uri)
+    model = DummyClassifier().fit([[0], [1]], [0, 1])
+    for _ in range(2):
+        with mlflow.start_run() as run:
+            mlflow.sklearn.log_model(model, name="model")
+        mlflow.register_model(f"runs:/{run.info.run_id}/model", "crediscore")
+    mlflow.MlflowClient().set_registered_model_alias("crediscore", "champion", "2")
+    champion = ev.registry_version("models:/crediscore@champion")
+    assert (champion.version, champion.run_id) == ("2", run.info.run_id)
+    assert ev.registry_version("models:/crediscore/1").version == "1"
