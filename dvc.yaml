@@ -167,3 +167,22 @@ stages:
       - drift
     outs:
       - data/simulated/economic_crisis.parquet
+
+  # Drift report of the crisis batch against the test set (Achraf, contract 4).
+  # The timestamped JSON/HTML pair lands next to latest.json, outside DVC.
+  detect_drift:
+    cmd: >-
+      python -m crediscore.monitoring.drift
+      --reference data/processed/test.parquet
+      --current data/simulated/economic_crisis.parquet
+      --out-dir reports/drift
+    deps:
+      - src/crediscore/monitoring/drift.py
+      - data/processed/test.parquet
+      - data/simulated/economic_crisis.parquet
+    params:
+      - features
+      - monitoring
+    outs:
+      - reports/drift/latest.json:
+          cache: false
