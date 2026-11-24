@@ -205,3 +205,19 @@ def test_inputs_are_not_modified() -> None:
 def test_bins_below_two_are_rejected() -> None:
     with pytest.raises(ValueError, match="bins"):
         psi(pd.Series([1.0, 2.0]), pd.Series([1.0, 2.0]), bins=1)
+
+
+def test_constant_zero_column_ignores_a_tiny_jitter() -> None:
+    # The pad is relative to max(|c|, 1): a column of zeros still gets one.
+    ref = pd.Series(np.zeros(50))
+    for jitter in (1e-9, -1e-9):
+        assert psi(ref, pd.Series(np.full(50, jitter))) == 0.0
+
+
+def test_a_current_value_on_an_edge_goes_to_the_upper_bin() -> None:
+    ref = pd.Series([1.0, 1.0, 1.0, 2.0, 3.0, 4.0])
+    # bins=4: inner quantiles 1, 1, 2 -> edges 0.5 | 1.5 | 2.5 | 4.5
+    assert list(_numeric_edges(ref, 4)) == [0.5, 1.5, 2.5, 4.5]
+    cur = pd.Series([2.5] * 6)  # lands in [2.5, 4.5), not in [1.5, 2.5)
+    expected = term(0, 0.5) + term(0, 1 / 6) + term(1, 2 / 6)
+    assert psi(ref, cur, bins=4) == pytest.approx(expected)
