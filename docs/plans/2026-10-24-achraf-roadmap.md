@@ -75,6 +75,8 @@ Contract 2 must state:
 >
 > **Promotion gate revised 2026-11-24 (L4-1, human-approved "adopt the recommended option"):** the gate is **relative**. The current champion scores test AUC 0.7469, so an absolute "AUC ≥ 0.75" on a fresh batch would block every promotion. Challenger and champion are scored on the same held-out batch, each with its own thresholds; promote iff AUC_ch ≥ AUC_champ, cost_ch ≤ cost_champ, both gender gaps ≤ 10 pts and age EO gap ≤ anchor + 2 pts (anchor = baseline age EO gap read from `reports/metrics.json`; missing = fail closed). No champion: fairness gates only. 0.75 / 0.25 / −15 % stay reported KPIs. Tolerances in `params.yaml` `promotion:` (`max_gender_gap_pts: 10`, `age_gap_margin_pts: 2`).
 >
+> **Promotion completed 2026-11-24 (lot 4 review, human policy "take the recommended option"):** `--data` is **required**: a fresh labelled batch that is **not the test split** (production or Areej's simulated batch; `test.parquet` only for a manual demo, named explicitly). Fail closed below `promotion.min_rows: 5000` rows (`batch_too_small`) or with fewer than 2 gender groups of `promotion.min_group_rows: 500` rows (`gender_groups_missing`). `thresholds.json` is authoritative (version tags must equal it, else `thresholds_mismatch`). Write order: tags, then delete `challenger`, then move `champion` last; challenger == champion → `already_champion`. Any error → `failed: ["error", "<message>"]`, exit 1.
+>
 > **Closed 2026-10-24:** D7: no fixed dates; lots run back to back, as fast as quality allows. D11: the commit e-mail is Achraf's and is linked to his GitHub account.
 
 Wording for non-developers in each line. Technical decisions are at the end.
@@ -575,12 +577,40 @@ Stop point: a short review before it is wired into Prefect.
 
 **Deviations and why:**
 - The gate is relative (L4-1, human-approved): AUC 0.75 and −15 % cost are KPIs, not gates; cost ≤ champion's is added.
-- SHAP base value is recomputed from the model on an all-zero row: shap 0.51 reports XGBoost 3's `expected_value` off by a constant (about 0.04 log-odds); found by the additivity test.
+- SHAP base value is computed from the model, for robustness: the classifier's raw margin on an all-zero row (LightGBM `booster_.predict(raw_score=True)`, XGBoost `get_booster().predict(output_margin=True)`, LogReg `decision_function`; RF in probability) minus the SHAP sum there. *Corrected by the review:* shap 0.51's XGBoost 3 `expected_value` offset is not a fixed 0.04: it varies with the number of trees (+0.009 / −0.023 log-odds measured by the reviewer) and is 0 with `scale_pos_weight`, the production path. The first version took the logit of `predict_proba` (float32 for XGBoost); the review replaced it by the raw margins.
 - LogReg reference without background: training mean for scaled numerics, "no category" for one-hot (no training data needed at API startup); a `background` frame can be passed.
 - The summary plot is a matplotlib bar chart of mean |contribution| on original columns (a beeswarm cannot colour categorical columns); computed on train rows, not test.
 - `evaluate.registry_version` extracted (resolves a `models:/` URI) and reused by the explainer CLI.
 - The audit also publishes per-group recall; `evaluate` keeps only its previous keys, so `metrics.json` is unchanged.
-- A batch with a single gender group gives a gap of 0 and passes (same as `evaluate` before); flagged for review.
+- ~~A batch with a single gender group gives a gap of 0 and passes~~: fixed in the correction pass (`gender_groups_missing`).
+
+**Lot 4 coordinator decisions (all final; product ones follow the human's standing policy "take the recommended option"):**
+
+| # | Decision | Date |
+|---|---|---|
+| L4-1 | Relative promotion gate on the same batch, own thresholds: AUC ≥ champion's, cost ≤ champion's, gender raw and EO gaps ≤ 10 pts, age EO gap ≤ anchor + 2 pts (anchor from `reports/metrics.json`, missing = fail closed); no champion = fairness only; exit 0/1, `reports/promotion.json`; tolerances under `params.promotion` | 2026-11-24 |
+| L4-2 | `fairness/audit.py` is the single home of the fairness numbers; `evaluate` refactored with `metrics.json` byte-identical | 2026-11-24 |
+| L4-3 | `explain/shap_explainer.py`: `Explainer` built once, top 3 factors on original columns, units per contract 2 §6, summary plot logged to MLflow (`kind=shap_summary`) | 2026-11-24 |
+| L4-4 | Hand-off to Iyed in contract 2 §10 (French), snippet run on a raw test row | 2026-11-24 |
+| L4-5 | Out of scope: Prefect wiring (Areej), API code (Iyed) | 2026-11-24 |
+| I1 | Near-atomic promotion: tags (incl. `promotion_previous_champion`), then delete `challenger`, then move `champion` last; challenger == champion → `already_champion`, exit 1 | 2026-11-24 (review) |
+| I2 | `promotion.min_rows: 5000` (`batch_too_small`) and `promotion.min_group_rows: 500` with at least 2 gender groups (`gender_groups_missing`), both fail closed | 2026-11-24 (review) |
+| I3 | `--data` required; promotion runs on a fresh batch, never the test split (except a named manual demo) | 2026-11-24 (review) |
+| I4 | `evaluate` stage relocked at HEAD; it lists only `promotion.max_gender_gap_pts` and `promotion.age_gap_margin_pts` | 2026-11-24 (review) |
+| m6 | `thresholds.json` is authoritative; version tags must match (`thresholds_mismatch`) | 2026-11-24 (review) |
+| m5 | Any error rewrites `reports/promotion.json` with `failed: ["error", "<message>"]`; the file is git-ignored | 2026-11-24 (review) |
+
+**Lot 4 correction pass (2026-11-25, review of `c92feca`: "ready with corrections", nothing blocking):**
+- [x] I1: `apply_promotion` writes the tags (incl. `promotion_previous_champion`), deletes `challenger`, moves `champion` last; `already_champion` no-op. Tests: call order spied; a client raising on `delete_registered_model_alias` or on `set_registered_model_alias` leaves `champion` on v1, and the re-run records previous champion `1` (promoted after the first, `no_challenger` after the second).
+- [x] I2 (for Areej's review): `promotion.min_rows: 5000`, `promotion.min_group_rows: 500`, both > 0 and `min_rows ≥ 2 × min_group_rows`; `batch_too_small`, `gender_groups_missing` (XNA not counted), tested.
+- [x] I3: `--data` required (argparse exit 2 without it); docstring, contract §1 and the decisions block say: fresh batch, not the test split.
+- [x] I4: `dvc repro -s evaluate` at HEAD: `metrics.json` md5 `6382b250…` unchanged; the evaluate stage lists only `promotion.max_gender_gap_pts` and `promotion.age_gap_margin_pts`; only the evaluate lock entry changed.
+- [x] Minor 1–10: `registry_version` alias test (v2 under `@champion`); LogReg contributions = `coef × x_transformed`, base = intercept; base from the raw margin (LightGBM `booster_`, XGBoost `output_margin`, LogReg `decision_function`, RF probability), additivity against raw margins for the 4 models and a test that `predict_proba` is never used for a log-odds base; XGBoost offset wording fixed (plan, contract §6, code comment); fatal errors rewrite the decision file (stale-file test); `thresholds_mismatch` (tags differ, absent or unreadable); age anchor rejects bool, NaN, ±inf; `/reports/promotion.json` git-ignored (shared file); contract §10 sign wording (non-decreasing `proba`) and the exact raw request columns (23 numeric + `DAYS_BIRTH`, `DAYS_EMPLOYED` + 10 categorical).
+- Found while replaying: the new `registry_version` test failed when run after other MLflow tests (stale active experiment id); fixed by setting its own experiment (`5fba2ff`). The reviewer's survivor #46 (`value.item()` branch) was dead code: `to_numpy(dtype=object)` already yields plain Python values; branch removed (`aa14056`).
+- Serving snippet re-run after the base change: same output (`A_ETUDIER`, 0.0978, same 3 factors).
+- **Reviewer probes replayed** on `git archive` copies (originals copied, not modified): `probe_shap.py`: additivity vs raw margin 1.8e-15 (LogReg), 1.7e-14 (LightGBM), 3.9e-6 (XGBoost, float32), 2.7e-15 (RF); p95 5.6 / 11.0 / 10.4 / 15.7 ms. `probe_shap2.py`: XGBoost offset without `scale_pos_weight` +0.0091 / −0.0232, additivity vs `output_margin` 3.4e-6 / 1.2e-6; contract row unchanged. `probe_promote.py` as written stops at B with `thresholds_mismatch`: it registers versions with `mlflow.register_model` without copying the threshold tags, which the gate now rejects by design. A v2 copy that tags versions like `registry.register` runs to the end: A `no_challenger`; B promote (equal), tags set; C own thresholds kept, `cost` fails; D anchor boundary exact (pass at `age − 2`, fail 1e-6 below), NaN / inf / missing / bool anchor → `age_anchor_missing`; E no champion → fairness only; F no thresholds.json → `error`; G `thresholds_mismatch`; H `delete` raising → aliases unchanged, re-run promotes with previous champion `2` (true); I, J (3 000 / 2 000 rows) → `batch_too_small`. Throwaway server port 5331 stopped.
+- **Reviewer `mutate.py` replayed** on a `git archive` copy of `5fba2ff` (unmutated selected suite first: 146 passed): **53 mutants, 48 killed, 1 survived, 4 skipped** (lines rewritten by the fixes: #24, #29, #39, #40). Survivor #46 = the dead branch, removed afterwards. Logs: `scratchpad/lot4/review_mutation2.log`, `review_probe_promote.log` (original probe), `review_probe_promote_v2.log`, `review_probe_shap.log`, `review_probe_shap2.log` of the session. A first replay (`review_mutation.log`) is void: its unmutated suite had the failing test above.
+- Checks: black, flake8, mypy strict green; **441 tests**; coverage 94 %; `audit` 100 %, `promote` 99 %, `shap_explainer` 99 %, `evaluate` 99 % (the misses are `__main__` lines).
 
 ### Lot 5 — S6: drift computation (Jalon 4) · branch `feature/drift-detection` · ~10 h incl. review
 
