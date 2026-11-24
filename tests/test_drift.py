@@ -1,6 +1,7 @@
 """Tests for the drift tests, drift_share, auc_drop and the report (contract 4)."""
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -371,16 +372,31 @@ def test_cli_writes_latest_json_and_a_stamped_pair(cli_run: tuple[Path, Path]) -
     )
 
 
-def test_cli_html_is_an_evidently_report_naming_the_features(
+def test_cli_html_is_an_evidently_report_naming_the_drifted_features(
     cli_run: tuple[Path, Path],
 ) -> None:
     _, out = cli_run
     (html,) = out.glob("*.html")
     text = html.read_text(encoding="utf-8")
-    assert len(text) > 10_000
-    assert "evidently" in text.lower()
-    assert "AMT_INCOME_TOTAL" in text and "NAME_INCOME_TYPE" in text
-    assert "CODE_GENDER" not in text  # only the model features are compared
+    assert "Drifted Columns" in text
+    # One entry per model feature, with the tests we asked for.
+    flags = dict(
+        re.findall(
+            r'"column_name": "(\w+)".*?"data_drift": "(Detected|Not Detected)"',
+            text,
+            re.S,
+        )
+    )
+    params = load_params(PARAMS_FILE)
+    assert sorted(flags) == sorted(params.features.all)  # no CODE_GENDER, no ID
+    assert text.count('"K-S p_value"') >= len(params.features.numeric)
+    assert text.count('"chi-square p_value"') >= len(params.features.categorical)
+    # Same KS and alpha as the JSON: same drifted numeric features.
+    report = json.loads((out / "latest.json").read_text(encoding="utf-8"))
+    ours = {f for f, p in report["ks"].items() if p is not None and p < 0.05}
+    theirs = {f for f in params.features.numeric if flags[f] == "Detected"}
+    assert "AMT_INCOME_TOTAL" in ours
+    assert theirs == ours
 
 
 def test_cli_without_model_has_null_auc_drop(
