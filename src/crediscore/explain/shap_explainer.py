@@ -67,10 +67,13 @@ class Factor(NamedTuple):
 
 
 def _raw(value: Any) -> float | int | str | None:
-    """The input value as a plain Python value, None when missing."""
+    """The input value, None when missing.
+
+    `to_numpy(dtype=object)` already yields plain Python float / int / str.
+    """
     if pd.isna(value):
         return None
-    plain: float | int | str = value.item() if isinstance(value, np.generic) else value
+    plain: float | int | str = value
     return plain
 
 
