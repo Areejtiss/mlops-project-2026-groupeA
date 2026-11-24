@@ -502,6 +502,20 @@ Accept all: 0.4037 per file. Each tuned run has its 25 nested trial runs (checke
 - `dvc.lock` is committed with the `train` and `evaluate` entries only. Our `train` deps record `train.parquet` md5 `d0178dc…` (what Areej's `split` writes today), while the committed `split` entry still says `d75701c…`: `featurize.py` changed in the float64-cast commit for Areej's review, and her lock entries are hers to refresh. `dvc repro` also rewrote `tests/fixtures/ci_sample.parquet` and `reports/validation.json` (pyarrow version / line endings): restored with `git checkout`.
 - `evaluate` was also run on the `no_age` model, for the D5 measurement only (output kept out of the repo). The champion had already been chosen on validation.
 
+**Lot 3 correction pass (2026-11-24, review of `a3e3db0`: "ready with corrections", no blocking item):**
+- [x] Important 1: `train --exclude` requires `--experiment`; `registry` treats a run tagged `excluded_features` as an experiment (`excluded:<cols>`), so it never registers silently.
+- [x] Important 2: one D5 anchor wording in the decisions doc, this plan and contract 2 §1; 34.9 kept only as a history note.
+- [x] Important 3: "Lot 3 coordinator decisions" block above.
+- [x] Important 4: thin-file KPI in `kpi.targets.thin_file` (literal flag + companions); `reports/metrics.json` regenerated with `dvc repro -s evaluate`; numbers in "Thin file" above and in contract 2 §8.
+- [x] Important 5 and minors: tests kill the reviewer's survivors #7, #17, #28, #29, #43 (the registry test store is now a throwaway git repo) and #54/#55 (search spaces pinned).
+- [x] Minor: the MLflow query filters on `train_data_hash` and on top-level runs (`mlflow.parentRunId IS NULL`); candidates must carry the `params.yaml` costs, constraints and `val_size` (`run_config`). Read-only check on the real server: same champion, `1c3f3b87…`.
+- [x] Minor: `train` and `evaluate` depend on `config.py`, `evaluate` also on `tune.py` (tested against each stage's import graph); relocked, data-stage entries untouched.
+- [x] Minor: `configs/` added to Achraf's row in `CLAUDE.md`; corrupted coverage line fixed.
+- Kept as is: taking `GENDER_COL` from `params.sensitive_cols` in `evaluate.py` is not a one-liner (`fairness` would need a new argument at every call), so the ponytail note stays until lot 4's `promotion.*` params.
+- Found during the pass: `evaluate` wrote `reports/metrics.json` with CRLF on Windows, so the md5 in `dvc.lock` never matched the LF file Git checks out (`eol=lf`), and `dvc status` showed `evaluate` as modified after a commit. Fixed with `newline="\n"` (test committed first) and relocked.
+- Also found: with the new `--exclude` guard, the old unknown-column test exited on that guard instead (reviewer mutant #62 survived). The test now passes `--experiment`.
+- **Reviewer's `mutate.py` replayed** on a `git archive` copy of `3a06add`. Unmutated suites first: full suite 340 passed, 8 skipped; reviewer test list 118 passed. Result: **65 mutants, 61 killed, 1 survived (#62, fixed above), 3 skipped** (#33, #40, #41: their lines changed). Follow-up run with the fixed test: #62 killed; the 3 skipped mutants, adapted to the new lines, killed; 6 new mutants on the new code killed (10 of 10). Final checks: black, flake8, mypy strict green; 348 tests; coverage 93 %. Logs: `scratchpad/lot3/reviewer_replay.log` and `scratchpad/lot3/reviewer_replay_extra.log` of the session.
+
 ### Lot 4 — S5: SHAP, fairness, promotion (Jalon 3) · branch `feature/explainability-fairness` · ~10 h incl. 2 review rounds (promotion is critical)
 
 **Depends on:** lot 3 and D5.
