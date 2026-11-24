@@ -22,10 +22,11 @@ Fail closed (not promoted, nothing changed), with the code in `failed`:
 `promotion.min_group_rows` rows), `thresholds_mismatch` (version tags !=
 thresholds.json), or `["error", "<message>"]` on any exception.
 
-On promotion, in this order: the version is tagged `promoted_at`,
+On promotion, in this order: the version is tagged
 `promotion_previous_champion`, `promotion_data_md5` and each check's value and
 limit (`promotion_<check>`, `promotion_<check>_limit`); alias `challenger` is
-removed; alias `champion` moves to the challenger's version, last. `--dry-run`
+removed; alias `champion` moves to the challenger's version; only then is
+`promoted_at` written, so an aborted promotion leaves none. `--dry-run`
 computes and writes the decision but changes nothing. The decision goes to
 stdout and to `--output` (JSON, rewritten at every run).
 
@@ -193,11 +194,14 @@ def apply_promotion(
     previous: str | None,
     checks: dict[str, dict[str, Any]],
     tags: dict[str, str],
+    promoted_at: str,
 ) -> None:
-    """Tag the version, drop `challenger`, then move `champion` (last).
+    """Tag the version, drop `challenger`, move `champion`, then `promoted_at`.
 
-    The champion alias moves last, so a failure part-way leaves the old
-    champion serving; a re-run then sees the true previous champion.
+    The champion alias moves after the other tags, so a failure part-way
+    leaves the old champion serving and a re-run sees the true previous
+    champion; `promoted_at` is written once the alias has moved, so an
+    aborted promotion never carries it.
     """
     for name, c in checks.items():
         tags[f"promotion_{name}"] = repr(c["value"])
@@ -207,6 +211,7 @@ def apply_promotion(
         client.set_model_version_tag(MODEL_NAME, version, key, value)
     client.delete_registered_model_alias(MODEL_NAME, "challenger")
     client.set_registered_model_alias(MODEL_NAME, "champion", version)
+    client.set_model_version_tag(MODEL_NAME, version, "promoted_at", promoted_at)
 
 
 def _fail(decision: dict[str, Any], code: str) -> None:
@@ -276,10 +281,8 @@ def _run(args: argparse.Namespace, decision: dict[str, Any]) -> str:
             ch_version,
             champ_version,
             decision["checks"],
-            {
-                "promoted_at": decision["timestamp"],
-                "promotion_data_md5": decision["data_md5"],
-            },
+            {"promotion_data_md5": decision["data_md5"]},
+            promoted_at=decision["timestamp"],
         )
         decision["applied"] = True
     verdict = "promoted" if decision["applied"] else "would promote"
