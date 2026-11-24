@@ -190,6 +190,13 @@ def test_thin_file_target_is_the_literal_kpi_with_companions(params: Params) -> 
     assert zero["thin_file"]["met"] is False  # accepting none is not "2x"
 
 
+def test_thin_file_portfolio_ratio_is_the_model_one(params: Params) -> None:
+    model = rep(thin_file={**thin(10, 0.6, 0.05), "good_payers_accepted_ratio": 1.7})
+    base = rep(thin_file={**thin(10, 0.6, 0.05), "good_payers_accepted_ratio": 1.2})
+    t = kpis(model, base, params)["targets"]["thin_file"]
+    assert t["companion"]["portfolio_good_payers_ratio_informative"] == 1.7
+
+
 def test_kpi_cost_vs_baseline_formula_and_status(params: Params) -> None:
     out = kpis(rep(cost_per_file=0.27), rep(cost_per_file=0.30), params)
     assert out["cost_vs_baseline"] == pytest.approx((0.27 - 0.30) / 0.30)
