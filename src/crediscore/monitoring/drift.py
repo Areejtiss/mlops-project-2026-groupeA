@@ -285,12 +285,15 @@ def compute_drift_report(
         A JSON-ready dict with exactly the keys of `REPORT_KEYS`.
 
     Raises:
-        ValueError: If a batch has no row, or `now` has no timezone.
+        ValueError: If a batch has no row, `now` has no timezone, or
+            `auc_drop` is NaN or infinite.
     """
     if reference.empty or current.empty:
         raise ValueError("empty batch: the reference and current need rows")
     if now is not None and now.utcoffset() is None:
         raise ValueError("now must carry a timezone (e.g. datetime.now(UTC))")
+    if auc_drop is not None and not np.isfinite(auc_drop):
+        raise ValueError(f"auc_drop must be finite or None, got {auc_drop}")
     cfg = params.monitoring
     psi_values = {
         f: psi(reference[f], current[f], cfg.psi_bins) for f in params.features.all
