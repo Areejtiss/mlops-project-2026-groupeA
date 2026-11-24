@@ -10,6 +10,7 @@ from typing import Any
 import mlflow
 import pandas as pd
 import pytest
+import yaml
 from sklearn.metrics import roc_auc_score
 
 from crediscore.config import Params, PromotionConfig, load_params
@@ -130,7 +131,11 @@ def test_age_anchor_is_the_baseline_eo_gap_of_metrics_json(tmp_path: Path) -> No
 @pytest.mark.parametrize(
     "content",
     [None, "not json", "{}", '{"baseline": {"fairness": {}}}', "[1]"]
-    + ['{"baseline": {"fairness": {"age": {"eo_gap_pts": "38"}}}}'],
+    + ['{"baseline": {"fairness": {"age": {"eo_gap_pts": "38"}}}}']
+    + [
+        '{"baseline": {"fairness": {"age": {"eo_gap_pts": %s}}}}' % v
+        for v in ("true", "NaN", "Infinity", "-Infinity")
+    ],
 )
 def test_missing_or_broken_age_anchor_is_none(
     tmp_path: Path, content: str | None
@@ -156,6 +161,8 @@ def tracked(tmp_path_factory: pytest.TempPathFactory) -> Path:
     hp = base / "hp.json"
     hp.write_text(json.dumps({"n_estimators": 40}), encoding="utf-8")
     write_anchor(base / "metrics.json", 38.7)
+    # The synthetic batch has 1 500 rows (about 975 F / 525 M): smaller minimums.
+    small_params(base / "params.yaml", min_rows=1000, min_group_rows=300)
     old_cwd, old_uri = Path.cwd(), os.environ.get("MLFLOW_TRACKING_URI")
     uri = f"sqlite:///{(base / 'mlflow.db').as_posix()}"
     os.chdir(base)
@@ -175,6 +182,13 @@ def tracked(tmp_path_factory: pytest.TempPathFactory) -> Path:
         else:
             os.environ["MLFLOW_TRACKING_URI"] = old_uri
     return base
+
+
+def small_params(path: Path, **promotion: int) -> Path:
+    raw = yaml.safe_load(PARAMS_FILE.read_text(encoding="utf-8"))
+    raw["promotion"].update(promotion)
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return path
 
 
 def write_anchor(path: Path, anchor: float) -> Path:
@@ -204,15 +218,20 @@ def aliases() -> dict[str, str]:
 
 
 def run_main(
-    store: Path, tmp_path: Path, *extra: str, metrics: Path | None = None
+    store: Path,
+    tmp_path: Path,
+    *extra: str,
+    metrics: Path | None = None,
+    params: Path | None = None,
+    data: Path | None = None,
 ) -> tuple[int, dict[str, Any]]:
     out = tmp_path / "promotion.json"
     code = pr.main(
         [
             "--params",
-            str(PARAMS_FILE),
+            str(params or store / "params.yaml"),
             "--data",
-            str(store / "heldout.parquet"),
+            str(data or store / "heldout.parquet"),
             "--metrics",
             str(metrics or store / "metrics.json"),
             "--output",
@@ -400,3 +419,138 @@ def test_score_audits_the_decisions_taken_with_the_model_thresholds(
     gender = out["fairness"]["gender"]["acceptance_by_group"]
     assert gender == pytest.approx({"F": 0.5, "M": 0.5})
     assert out["review_share"] == 0.25
+
+
+# --- correction pass: batch guards, atomicity, stale output, thresholds -------
+
+
+def test_batch_check_counts_gender_groups_without_xna() -> None:
+    promo = PromotionConfig(
+        max_gender_gap_pts=10, age_gap_margin_pts=2, min_rows=4, min_group_rows=2
+    )
+    df = pd.DataFrame({"CODE_GENDER": ["F", "F", "M", "XNA", "XNA"]})
+    assert pr.batch_check(df, promo) == "gender_groups_missing"
+    df = pd.DataFrame({"CODE_GENDER": ["F", "F", "M", "M"]})
+    assert pr.batch_check(df, promo) is None  # boundaries inclusive
+    assert pr.batch_check(df.iloc[:3], promo) == "batch_too_small"
+
+
+def test_data_is_required() -> None:
+    with pytest.raises(SystemExit) as err:
+        pr.main(["--metrics", "m.json", "--output", "o.json"])
+    assert err.value.code == 2
+
+
+def test_small_batch_fails_closed(store: Path, tmp_path: Path) -> None:
+    register_pair("lightgbm", "lightgbm")
+    params = small_params(tmp_path / "p.yaml", min_rows=1501, min_group_rows=300)
+    code, decision = run_main(store, tmp_path, params=params)
+    assert (code, decision["failed"]) == (1, ["batch_too_small"])
+    assert decision["n_rows"] == 1500
+    assert aliases() == {"champion": "1", "challenger": "2"}
+
+
+def test_single_gender_batch_fails_closed(store: Path, tmp_path: Path) -> None:
+    register_pair("lightgbm", "lightgbm")
+    params = small_params(tmp_path / "p.yaml", min_rows=1000, min_group_rows=480)
+    batch = pd.read_parquet(store / "heldout.parquet")
+    assert (batch["CODE_GENDER"] == "M").sum() >= 480  # both groups pass here
+    females = tmp_path / "f.parquet"
+    pd.concat([batch[batch["CODE_GENDER"] == "F"]] * 2).to_parquet(females)
+    code, decision = run_main(store, tmp_path, params=params, data=females)
+    assert (code, decision["failed"]) == (1, ["gender_groups_missing"])
+    assert aliases() == {"champion": "1", "challenger": "2"}
+
+
+def test_challenger_that_is_already_champion_is_a_no_op(
+    store: Path, tmp_path: Path
+) -> None:
+    register(mlflow.MlflowClient(), run_ids()["lightgbm"])
+    mlflow.MlflowClient().set_registered_model_alias(MODEL_NAME, "challenger", "1")
+    code, decision = run_main(store, tmp_path)
+    assert (code, decision["failed"]) == (1, ["already_champion"])
+    assert aliases() == {"champion": "1", "challenger": "1"}
+    tags = mlflow.MlflowClient().get_model_version(MODEL_NAME, "1").tags
+    assert "promoted_at" not in tags
+
+
+def test_tags_first_challenger_alias_next_champion_alias_last(
+    store: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    register_pair("lightgbm", "lightgbm")
+    calls: list[str] = []
+    client_cls = mlflow.MlflowClient
+    for name in (
+        "set_model_version_tag",
+        "delete_registered_model_alias",
+        "set_registered_model_alias",
+    ):
+        original = getattr(client_cls, name)
+
+        def spy(self: Any, *a: Any, _o: Any = original, _n: str = name) -> Any:
+            calls.append(_n)
+            return _o(self, *a)
+
+        monkeypatch.setattr(client_cls, name, spy)
+    code, _ = run_main(store, tmp_path)
+    assert code == 0
+    first_alias = calls.index("delete_registered_model_alias")
+    assert set(calls[:first_alias]) == {"set_model_version_tag"}
+    assert calls[first_alias:] == [
+        "delete_registered_model_alias",
+        "set_registered_model_alias",
+    ]
+
+
+@pytest.mark.parametrize(
+    "failing", ["delete_registered_model_alias", "set_registered_model_alias"]
+)
+def test_failure_between_calls_never_records_a_false_previous_champion(
+    store: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    register_pair("lightgbm", "lightgbm")
+
+    def boom(*a: Any, **k: Any) -> None:
+        raise RuntimeError("registry down")
+
+    with monkeypatch.context() as m:
+        m.setattr(mlflow.MlflowClient, failing, boom)
+        code, decision = run_main(store, tmp_path)
+    assert code == 1
+    assert decision["failed"][0] == "error"
+    assert "registry down" in decision["failed"][1]
+    assert aliases()["champion"] == "1"  # the champion alias moves last
+    code, decision = run_main(store, tmp_path)  # re-run, registry back
+    tags = mlflow.MlflowClient().get_model_version(MODEL_NAME, "2").tags
+    assert tags["promotion_previous_champion"] == "1"
+    if failing == "delete_registered_model_alias":
+        assert code == 0
+        assert aliases() == {"champion": "2"}
+    else:  # challenger alias already gone: nothing left to promote
+        assert (code, decision["failed"]) == (1, ["no_challenger"])
+        assert aliases() == {"champion": "1"}
+
+
+def test_a_fatal_error_overwrites_a_stale_decision_file(
+    store: Path, tmp_path: Path
+) -> None:
+    register_pair("lightgbm", "lightgbm")
+    out = tmp_path / "promotion.json"
+    out.write_text('{"promote": true, "stale": true}', encoding="utf-8")
+    code, decision = run_main(store, tmp_path, data=tmp_path / "absent.parquet")
+    assert code == 1
+    assert decision["promote"] is False
+    assert decision["failed"][0] == "error"
+    assert "absent.parquet" in decision["failed"][1]
+    assert "stale" not in decision
+
+
+def test_version_tags_differing_from_thresholds_json_fail_closed(
+    store: Path, tmp_path: Path
+) -> None:
+    register_pair("lightgbm", "lightgbm")
+    client = mlflow.MlflowClient()
+    client.set_model_version_tag(MODEL_NAME, "2", "threshold_low", "0.5")
+    code, decision = run_main(store, tmp_path)
+    assert (code, decision["failed"]) == (1, ["thresholds_mismatch"])
+    assert aliases() == {"champion": "1", "challenger": "2"}
