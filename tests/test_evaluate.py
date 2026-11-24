@@ -474,6 +474,7 @@ def test_registry_version_follows_the_alias_and_the_number(
     monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
     monkeypatch.chdir(tmp_path)
     mlflow.set_tracking_uri(uri)
+    mlflow.set_experiment("registry_version")  # not an id left by an earlier test
     model = DummyClassifier().fit([[0], [1]], [0, 1])
     for _ in range(2):
         with mlflow.start_run() as run:
