@@ -661,10 +661,10 @@ Stop point: a short review before it is wired into Prefect.
   - **I3** Prometheus alerts on an `alert` gauge (0/1) and an `auc_drop` gauge; per-feature rules, if any, only on `psi{feature=~"<key_features>"}`; no new JSON key.
   - **Minor 1** a feature empty on one side only counts as drifted (KS p = 0); `null` only when both sides are empty. **Minor 2** empty batch → `ValueError("empty batch…")`. **Minor 3** naive `now` → `ValueError`; timestamp without microseconds.
 
-**Lot 5 status (2026-11-24): implemented, reviewed NOT READY, correction pass done; awaiting re-review.** Branch `feature/drift-detection`, built on lot 3 in progress (rebase on lot 3's final tip pending).
+**Lot 5 status (2026-11-24): review round 2 verdict "ready" (minor corrections only, done).** Round 1 was NOT READY; correction pass done. Branch `feature/drift-detection`, built on lot 3 in progress (rebase on lot 3's final tip pending).
 - [x] 1. Contract 4 written and revised (`docs/contracts/04-drift-report.md`, French), **proposal for Areej and Iyed**.
 - [x] 2. `monitoring/drift.py`: `psi`, `ks_test`, `chi2_test`, `drift_share`, `is_alert`, `auc_drop`, `compute_drift_report`, `write_html`, CLI `main`. `monitoring:` in `params.yaml` + `MonitoringConfig` with `min_rows`, `min_labelled` and `min_positives` (each key feature must be a model feature), "(for Areej's review)".
-- [x] 3. Tests: `tests/test_psi.py` (25), `tests/test_drift.py` (60), 14 new in `test_config.py`.
+- [x] 3. Tests: `tests/test_psi.py` (25), `tests/test_drift.py` (63), 14 new in `test_config.py`.
 - [x] 4. Evidently 0.7.23 HTML + JSON + `latest.json`; DVC stage `detect_drift`; `/reports/drift/` git-ignored. `latest.json` carries a timestamp: a **non-reproducible** output, uncached, git-ignored, regenerated at each run. Deps include `config.py`, `models/evaluate.py` (`load_model`) and `models/train.py` (`prepare_xy`).
 - [x] 5. Concept drift: `auc_drop(model, reference, current, params)` on the labelled rows of both batches; `null` when not computable (I1, I2).
 - Real runs, after B1 (a local LightGBM copied to `models/lightgbm`, see the caveat below; test = 20 000 rows). Old → new where it changed:
@@ -693,7 +693,8 @@ Stop point: a short review before it is wired into Prefect.
   - Own set before the review: 41 mutants, round 1 38 killed / 3 survived, round 2 39/39 (`scratchpad/lot5/mutation_drift.log`, `mutation_drift_round2.log`). **That "0 survivors" was the implementer's own set only:** the reviewer's set (44 mutants, `rl5/probes/mutation.log`) had **12 survivors, 3 of them equivalent** (#05 no dedup, #12 dtype from current, #13 categorical swap).
   - Reviewer's `mutate.py` replayed from a copy on the corrected HEAD (`scratchpad/lot5/fix/mutation_reviewer_replay.log`, 122 passed unmutated): **38 valid, 36 killed, 2 survived** (#12 and #13, equivalent: categorical PSI is symmetric in its terms, and both inputs share a dtype), 6 invalid (lines rewritten by the fix).
   - Own correction-pass set (`scratchpad/lot5/fix/mutate_v2.py`): round 1 (`mutation_own_v2.log`, 122 passed unmutated): **43 valid, 41 killed, 2 survived** (constant pad without `max(…, 1)`, edge side `left`), both killed by two new tests. Round 2 on the final HEAD (`mutation_own_v2_round2.log`, 124 passed unmutated): **43 valid, 43 killed, 0 survived**.
-- Checks: black, flake8 and mypy clean; **425 tests pass** (326 before the lot), coverage 93 %, `drift.py` 99 % (the `__main__` line), `config.py` 100 %.
+- **Review round 2: ready.** The reviewer's campaign on the new lines (32 mutants, `rl5/probes2/mutate2.py`) gave 29 killed and 3 survivors: #17 (`n_rows` from the current batch only), #20 (`min_rows` hard-coded) and #22 (`min_labelled` hard-coded). Three tests now cover them: a 300-row reference against a 2 000-row shifted current gives no alert; the small-batch guard follows `min_rows` and `auc_drop` follows `min_labelled`, both changed through `params.model_copy`. Replay of the reviewer's script, copied, on a `git archive` copy of the HEAD with those tests (129 passed unmutated): **32 valid, 32 killed, 0 survived** (log `scratchpad/lot5/fix2/mutation_reviewer2_replay.log` of the session).
+- Checks: black, flake8 and mypy clean; **428 tests pass** (326 before the lot), coverage 93 %, `drift.py` 99 % (the `__main__` line), `config.py` 100 %.
 
 ### Lot 6 — S7: closing the loop (with Areej) · ~6 h
 
