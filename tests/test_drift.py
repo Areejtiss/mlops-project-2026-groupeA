@@ -633,3 +633,11 @@ def test_report_uses_the_alpha_param(
     )
     assert report["drift_share"] > 0
     assert compute_drift_report(synthetic_frame, current, strict)["drift_share"] == 0
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_report_rejects_a_non_finite_auc_drop(
+    synthetic_frame: pd.DataFrame, params: Params, bad: float
+) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        compute_drift_report(synthetic_frame, synthetic_frame, params, auc_drop=bad)
