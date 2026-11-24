@@ -554,3 +554,17 @@ def test_version_tags_differing_from_thresholds_json_fail_closed(
     code, decision = run_main(store, tmp_path)
     assert (code, decision["failed"]) == (1, ["thresholds_mismatch"])
     assert aliases() == {"champion": "1", "challenger": "2"}
+
+
+@pytest.mark.parametrize("broken", ["missing", "not a number"])
+def test_absent_or_unreadable_threshold_tags_fail_closed(
+    store: Path, tmp_path: Path, broken: str
+) -> None:
+    register_pair("lightgbm", "lightgbm")
+    client = mlflow.MlflowClient()
+    if broken == "missing":
+        client.delete_model_version_tag(MODEL_NAME, "2", "threshold_high")
+    else:
+        client.set_model_version_tag(MODEL_NAME, "2", "threshold_high", broken)
+    code, decision = run_main(store, tmp_path)
+    assert (code, decision["failed"]) == (1, ["thresholds_mismatch"])
