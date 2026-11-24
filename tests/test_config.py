@@ -161,3 +161,29 @@ def test_negative_drift_factor_is_rejected(tmp_path: Path) -> None:
     path = write_params(tmp_path, {"drift": {"economic_crisis": crisis}})
     with pytest.raises(ValidationError, match="income_factor"):
         load_params(path)
+
+
+def test_promotion_keys_are_loaded() -> None:
+    promotion = load_params(PARAMS_FILE).promotion
+    assert promotion.max_gender_gap_pts == 10
+    assert promotion.age_gap_margin_pts == 2
+
+
+@pytest.mark.parametrize("key", ["max_gender_gap_pts", "age_gap_margin_pts"])
+@pytest.mark.parametrize("value", [-0.1, 100.1])
+def test_promotion_gap_outside_0_100_points_is_rejected(
+    tmp_path: Path, key: str, value: float
+) -> None:
+    path = write_params(tmp_path, {"promotion": {key: value}})
+    with pytest.raises(ValidationError, match=rf"{key}\n.*(greater|less) than"):
+        load_params(path)
+
+
+@pytest.mark.parametrize("value", [0, 100])
+def test_promotion_gap_bounds_are_inclusive(tmp_path: Path, value: float) -> None:
+    path = write_params(
+        tmp_path,
+        {"promotion": {"max_gender_gap_pts": value, "age_gap_margin_pts": value}},
+    )
+    promotion = load_params(path).promotion
+    assert promotion.max_gender_gap_pts == promotion.age_gap_margin_pts == value
