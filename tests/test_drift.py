@@ -2,18 +2,21 @@
 
 import json
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
 import pytest
+from scipy import stats
 from sklearn.metrics import roc_auc_score
 
 from crediscore.config import MonitoringConfig, Params, load_params
 from crediscore.models.train import fit_model, prepare_xy
+from crediscore.monitoring import drift
 from crediscore.monitoring.drift import (
+    MIN_POSITIVES,
     REPORT_KEYS,
     auc_drop,
     chi2_test,
@@ -22,6 +25,7 @@ from crediscore.monitoring.drift import (
     is_alert,
     ks_test,
     main,
+    psi,
 )
 from conftest import PARAMS_FILE, make_synthetic_frame
 
@@ -36,6 +40,8 @@ def monitoring() -> MonitoringConfig:
         psi_alert=0.20,
         auc_drop_alert=0.03,
         psi_bins=10,
+        min_rows=500,
+        min_labelled=1000,
         key_features=["AMT_INCOME_TOTAL"],
     )
 
@@ -59,11 +65,16 @@ def test_ks_ignores_missing_values() -> None:
 
 
 @pytest.mark.parametrize("side", ["reference", "current"])
-def test_ks_on_an_all_nan_column_is_none(side: str) -> None:
+def test_ks_with_one_all_nan_side_is_certain_drift(side: str) -> None:
     values = pd.Series([1.0, 2.0, 3.0])
     nan = pd.Series([np.nan] * 3)
     ref, cur = (nan, values) if side == "reference" else (values, nan)
-    assert ks_test(ref, cur) is None
+    assert ks_test(ref, cur) == 0.0
+
+
+def test_ks_with_both_sides_all_nan_is_none() -> None:
+    nan = pd.Series([np.nan] * 3)
+    assert ks_test(nan, nan.copy()) is None
 
 
 # --- chi2 -----------------------------------------------------------------
@@ -91,6 +102,17 @@ def test_chi2_detects_an_unseen_category() -> None:
     assert chi2_test(ref, cur) < 0.05
 
 
+def test_chi2_two_categories_uses_the_yates_correction() -> None:
+    ref = pd.Series(["a"] * 30 + ["b"] * 10)
+    cur = pd.Series(["a"] * 20 + ["b"] * 20)
+    # Table [[30, 10], [20, 20]], expected [[25, 15], [25, 15]].
+    observed = np.array([[30, 10], [20, 20]])
+    expected = np.array([[25, 15], [25, 15]])
+    yates = (((np.abs(observed - expected) - 0.5) ** 2) / expected).sum()
+    assert chi2_test(ref, cur) == pytest.approx(stats.chi2.sf(yates, df=1))
+    assert chi2_test(ref, cur) == pytest.approx(0.0647, abs=1e-4)
+
+
 @pytest.mark.parametrize(
     "values", [["a"] * 10, [None] * 10], ids=["one-category", "all-missing"]
 )
@@ -103,7 +125,7 @@ def test_chi2_with_a_single_category_is_one(values: list[str | None]) -> None:
 
 def test_drift_share_counts_p_values_strictly_below_alpha() -> None:
     p_values = {"a": 0.01, "b": 0.5, "c": None, "d": 0.05}
-    # d sits on alpha (not below); c has no test (all NaN): not drifted.
+    # d sits on alpha (not below); c has no test (NaN on both sides).
     assert drift_share(p_values, alpha=0.05) == 0.25
 
 
@@ -136,7 +158,29 @@ def test_alert_rule_at_each_boundary(
     drop: float | None,
     expected: bool,
 ) -> None:
-    assert is_alert(share, psi_values, drop, monitoring) is expected
+    assert is_alert(share, psi_values, drop, monitoring, n_rows=500) is expected
+
+
+@pytest.mark.parametrize(
+    ("n_rows", "share", "psi_value", "drop", "expected"),
+    [
+        (500, 0.5, 0.0, None, True),  # min_rows reached: the share counts
+        (499, 0.5, 0.0, None, False),  # small batch: the share is ignored
+        (500, 0.0, 0.5, None, True),
+        (499, 0.0, 0.5, None, False),  # small batch: the key PSI is ignored
+        (499, 0.5, 0.5, 0.05, True),  # the AUC rule still applies
+    ],
+)
+def test_small_batches_do_not_alert_on_drift_share_or_psi(
+    monitoring: MonitoringConfig,
+    n_rows: int,
+    share: float,
+    psi_value: float,
+    drop: float | None,
+    expected: bool,
+) -> None:
+    psi_values = {"AMT_INCOME_TOTAL": psi_value}
+    assert is_alert(share, psi_values, drop, monitoring, n_rows=n_rows) is expected
 
 
 # --- report ---------------------------------------------------------------
@@ -184,9 +228,65 @@ def test_report_timestamp_defaults_to_now_in_utc(
 ) -> None:
     before = datetime.now(UTC).replace(microsecond=0)
     report = compute_drift_report(synthetic_frame, synthetic_frame, params)
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00", report["timestamp"])
     stamp = datetime.fromisoformat(report["timestamp"])
-    assert stamp.utcoffset() is not None and stamp.utcoffset().total_seconds() == 0
     assert before <= stamp <= datetime.now(UTC)
+
+
+def test_report_timestamp_is_converted_to_utc(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    paris = datetime(
+        2026, 11, 24, 12, 0, 0, 123456, tzinfo=timezone(timedelta(hours=1))
+    )
+    report = compute_drift_report(synthetic_frame, synthetic_frame, params, now=paris)
+    assert report["timestamp"] == "2026-11-24T11:00:00+00:00"
+
+
+def test_report_rejects_a_naive_datetime(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    with pytest.raises(ValueError, match="timezone"):
+        compute_drift_report(
+            synthetic_frame, synthetic_frame, params, now=datetime(2026, 11, 24)
+        )
+
+
+@pytest.mark.parametrize("side", ["reference", "current"])
+def test_report_rejects_an_empty_batch(
+    synthetic_frame: pd.DataFrame, params: Params, side: str
+) -> None:
+    empty = synthetic_frame.iloc[:0]
+    ref, cur = (
+        (empty, synthetic_frame) if side == "reference" else (synthetic_frame, empty)
+    )
+    with pytest.raises(ValueError, match="empty batch"):
+        compute_drift_report(ref, cur, params)
+
+
+def test_report_psi_uses_the_reference_bins(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    current = synthetic_frame.copy()
+    current["AMT_CREDIT"] = current["AMT_CREDIT"] * 0.2  # narrower
+    report = compute_drift_report(synthetic_frame, current, params)
+    forward = psi(synthetic_frame["AMT_CREDIT"], current["AMT_CREDIT"])
+    assert report["psi"]["AMT_CREDIT"] == pytest.approx(forward)
+    assert forward != pytest.approx(
+        psi(current["AMT_CREDIT"], synthetic_frame["AMT_CREDIT"])
+    )
+
+
+@pytest.mark.parametrize(("n_rows", "alert"), [(499, False), (500, True)])
+def test_report_on_a_small_batch_publishes_but_does_not_alert(
+    synthetic_frame: pd.DataFrame, params: Params, n_rows: int, alert: bool
+) -> None:
+    current = synthetic_frame.iloc[:n_rows].copy()
+    current["AMT_INCOME_TOTAL"] += 1.0
+    report = compute_drift_report(synthetic_frame, current, params)
+    assert report["psi"]["AMT_INCOME_TOTAL"] >= params.monitoring.psi_alert
+    assert report["ks"]["AMT_INCOME_TOTAL"] < params.monitoring.alpha
+    assert report["alert"] is alert
 
 
 def test_report_flags_a_shifted_key_feature(
@@ -228,15 +328,17 @@ def test_report_tests_categorical_features_with_chi2(
     assert report["alert"] is False  # not a key feature, share below 0.30
 
 
-def test_report_all_nan_numeric_column_is_null_in_ks(
+def test_report_all_nan_numeric_column(
     synthetic_frame: pd.DataFrame, params: Params
 ) -> None:
     current = synthetic_frame.copy()
     current["EXT_SOURCE_1"] = np.nan
     report = compute_drift_report(synthetic_frame, current, params)
-    assert report["ks"]["EXT_SOURCE_1"] is None
+    assert report["ks"]["EXT_SOURCE_1"] == 0.0  # the values all went missing
     assert report["psi"]["EXT_SOURCE_1"] > 1  # the NaN bin shows it
-    assert report["drift_share"] == 0.0
+    assert report["drift_share"] == pytest.approx(1 / len(params.features.all))
+    both = synthetic_frame.assign(EXT_SOURCE_1=np.nan)
+    assert compute_drift_report(both, current, params)["ks"]["EXT_SOURCE_1"] is None
     json.dumps(report, allow_nan=False)
 
 
@@ -364,7 +466,16 @@ def test_cli_writes_latest_json_and_a_stamped_pair(cli_run: tuple[Path, Path]) -
     latest = json.loads((out / "latest.json").read_text(encoding="utf-8"))
     assert list(latest) == list(REPORT_KEYS)
     assert latest["alert"] is True  # alert lives in the JSON, the run still ends
-    assert isinstance(latest["auc_drop"], float)
+    tmp, _ = cli_run
+    params = load_params(PARAMS_FILE)
+    model = joblib.load(tmp / "model" / "model.joblib")
+    ref, cur = pd.read_parquet(tmp / "ref.parquet"), pd.read_parquet(
+        tmp / "cur.parquet"
+    )
+    expected = auc_drop(model, ref, cur, params)
+    assert expected is not None
+    assert expected != pytest.approx(auc_drop(model, cur, ref, params))
+    assert latest["auc_drop"] == pytest.approx(expected)
     stamp = datetime.fromisoformat(latest["timestamp"]).strftime("%Y-%m-%d_%H%M%S")
     assert json.loads((out / f"{stamp}.json").read_text(encoding="utf-8")) == latest
     assert sorted(p.name for p in out.iterdir()) == sorted(
@@ -397,6 +508,44 @@ def test_cli_html_is_an_evidently_report_naming_the_drifted_features(
     theirs = {f for f in params.features.numeric if flags[f] == "Detected"}
     assert "AMT_INCOME_TOTAL" in ours
     assert theirs == ours
+    # Evidently's own dataset-drift headline uses our drift_share threshold.
+    assert "Dataset drift detection threshold is 0.3" in text
+    # run(current, reference): the reference histogram starts at the reference min.
+    tmp, _ = cli_run
+    ref = pd.read_parquet(tmp / "ref.parquet")
+    match = re.search(
+        r'"column_name": "AMT_INCOME_TOTAL".*?'
+        r'"reference_distribution": \{"x": \[([-0-9.e]+)',
+        text,
+        re.S,
+    )
+    assert match is not None
+    assert float(match.group(1)) == pytest.approx(ref["AMT_INCOME_TOTAL"].min())
+
+
+def test_cli_refuses_to_write_non_strict_json(
+    cli_run: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tmp, _ = cli_run
+
+    def nan_report(*args: object, **kwargs: object) -> dict[str, object]:
+        return {"timestamp": "2026-11-24T10:00:00+00:00", "drift_share": float("nan")}
+
+    monkeypatch.setattr(drift, "compute_drift_report", nan_report)
+    with pytest.raises(ValueError, match="JSON compliant"):
+        main(
+            [
+                "--reference",
+                str(tmp / "ref.parquet"),
+                "--current",
+                str(tmp / "ref.parquet"),
+                "--out-dir",
+                str(tmp_path),
+                "--params",
+                str(PARAMS_FILE),
+            ]
+        )
+    assert not list(tmp_path.glob("*.json"))
 
 
 def test_cli_without_model_has_null_auc_drop(
@@ -421,16 +570,61 @@ def test_cli_without_model_has_null_auc_drop(
     assert len(list(tmp_path.glob("*.html"))) == 1
 
 
-def test_auc_drop_uses_the_labelled_current_rows_only(
+def with_min_labelled(params: Params, n: int) -> Params:
+    monitoring = params.monitoring.model_copy(update={"min_labelled": n})
+    return params.model_copy(update={"monitoring": monitoring})
+
+
+def test_auc_drop_uses_the_labelled_rows_only(
     synthetic_frame: pd.DataFrame, params: Params
 ) -> None:
-    ref, cur = synthetic_frame.iloc[:1000], synthetic_frame.iloc[1000:].copy()
+    small = with_min_labelled(params, 400)
+    ref, cur = synthetic_frame.iloc[:1000].copy(), synthetic_frame.iloc[1000:].copy()
     labelled = cur.iloc[::2]
     cur.loc[cur.index[1::2], params.target] = np.nan  # feedback not back yet
     model = ExtSourceModel()
-    assert auc_drop(model, ref, cur, params) == pytest.approx(
-        auc_drop(model, ref, labelled, params)
+    expected = auc_drop(model, ref, labelled, small)
+    assert expected is not None
+    assert auc_drop(model, ref, cur, small) == pytest.approx(expected)
+    ref.loc[ref.index[:5], params.target] = np.nan  # reference too
+    assert auc_drop(model, ref, cur, small) == pytest.approx(
+        auc_drop(model, ref.iloc[5:], labelled, small)
     )
+
+
+@pytest.mark.parametrize(("n", "computed"), [(999, False), (1000, True)])
+def test_auc_drop_needs_min_labelled_rows(
+    synthetic_frame: pd.DataFrame, params: Params, n: int, computed: bool
+) -> None:
+    ref, cur = synthetic_frame.iloc[:1000], synthetic_frame.iloc[1000 : 1000 + n]
+    drop = auc_drop(ExtSourceModel(), ref, cur, params)
+    assert (drop is not None) is computed
+    small_ref = auc_drop(ExtSourceModel(), cur, ref, params)
+    assert (small_ref is not None) is computed  # the reference too
+
+
+def positives_frame(frame: pd.DataFrame, target: str, positives: int) -> pd.DataFrame:
+    out = frame.copy()
+    out[target] = 0
+    out.loc[out.index[:positives], target] = 1
+    return out
+
+
+@pytest.mark.parametrize("positives", [MIN_POSITIVES - 1, MIN_POSITIVES])
+def test_auc_drop_needs_min_positives(
+    synthetic_frame: pd.DataFrame, params: Params, positives: int
+) -> None:
+    assert MIN_POSITIVES == 50
+    cur = positives_frame(synthetic_frame.iloc[1000:], params.target, positives)
+    drop = auc_drop(ExtSourceModel(), synthetic_frame.iloc[:1000], cur, params)
+    assert (drop is not None) is (positives >= MIN_POSITIVES)
+
+
+def test_auc_drop_with_a_single_class_is_none(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    cur = synthetic_frame.iloc[1000:].assign(**{params.target: 1})
+    assert auc_drop(ExtSourceModel(), synthetic_frame.iloc[:1000], cur, params) is None
 
 
 def test_report_uses_the_alpha_param(
