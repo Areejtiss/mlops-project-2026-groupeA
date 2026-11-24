@@ -206,7 +206,7 @@ def test_two_gender_groups_must_fit_in_the_minimum_batch(tmp_path: Path) -> None
     path = write_params(
         tmp_path, {"promotion": {"min_rows": 999, "min_group_rows": 500}}
     )
-    with pytest.raises(ValidationError, match=r"2 * min_group_rows"):
+    with pytest.raises(ValidationError, match="at least twice min_group_rows"):
         load_params(path)
     ok = write_params(
         tmp_path, {"promotion": {"min_rows": 1000, "min_group_rows": 500}}
