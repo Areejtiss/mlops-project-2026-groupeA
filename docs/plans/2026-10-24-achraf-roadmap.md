@@ -644,6 +644,31 @@ Stop point: a short review before it is wired into Prefect.
 
 **Done when:** on Areej's "crise économique" batch, the module flags drift and writes the JSON and the HTML.
 
+**Lot 5 status (2026-11-24): implemented, TDD, before adversarial review.** Branch `feature/drift-detection`, built on lot 3 in progress (rebase on lot 3's final tip pending).
+- [x] 1. Contract 4 written (`docs/contracts/04-drift-report.md`, French), **proposal for Areej and Iyed**.
+- [x] 2. `monitoring/drift.py`: `psi`, `ks_test`, `chi2_test`, `drift_share`, `is_alert`, `auc_drop`, `compute_drift_report`, `write_html`, CLI `main`. `monitoring:` in `params.yaml` + `MonitoringConfig` (alpha 0.05, drift_share_alert 0.30, psi_alert 0.20, auc_drop_alert 0.03, psi_bins 10, key features `AMT_INCOME_TOTAL`, `AMT_CREDIT`, `ANNUITY_INCOME_RATIO`, `EXT_SOURCE_2`; each key feature must be a model feature), "(for Areej's review)".
+- [x] 3. Tests: `tests/test_psi.py` (18), `tests/test_drift.py` (37), 11 new in `test_config.py`.
+- [x] 4. Evidently 0.7.23 `DataDriftPreset` HTML: `reports/drift/<YYYY-MM-DD_HHMMSS>.html` (UTC) + the JSON next to it + `latest.json`. DVC stage `detect_drift` after `simulate_crisis` (`latest.json`, `cache: false`, HTML outside DVC). `/reports/drift/` git-ignored.
+- [x] 5. Concept drift: `auc_drop(model, reference, current, params)` = reference AUC − current AUC; `null` without current labels. CLI `--model <dir | models:/ URI>` (reuses `evaluate.load_model`).
+- Real runs (a local LightGBM copied to `models/lightgbm`, see the caveat below; test = 20 000 rows):
+
+  | Current vs reference | drift_share | Drifted (KS / χ² p < 0.05) | Key PSI (income / credit / annuity ratio / EXT_SOURCE_2) | auc_drop | alert |
+  |---|---|---|---|---|---|
+  | Economic crisis vs test | 0.171 (7/41) | income, credit, annuity, the 3 ratios, `EMPLOYED_YEARS` | 2.971 / 0.579 / 0.677 / 0.000 | 0.033 (0.816 → 0.784) | **true** |
+  | Test half B vs half A (seed 42) | 0.024 (1/41, `EMPLOYED_YEARS`) | — | 0.006 / 0.004 / 0.003 / 0.003 (max PSI 0.011) | 0.003 | false |
+  | Scenario C: 30 % of "Commercial associate" labels flipped vs test | 0.000 | none | all 0 | 0.162 (0.816 → 0.654) | **true** |
+
+  Top PSI on the crisis: `AMT_INCOME_TOTAL` 2.97, `CREDIT_TERM` 0.70, `ANNUITY_INCOME_RATIO` 0.68, `AMT_CREDIT` 0.58, `CREDIT_INCOME_RATIO` 0.41. The Evidently HTML (about 6 MB) lists the 41 features and flags the same 7 on the crisis.
+- Deviations and choices:
+  - `compute_drift_report(reference, current, params, *, auc_drop=None, now=None)` instead of `labels=None`: the AUC needs the model, so the caller computes `auc_drop` first (core stays pure).
+  - PSI bins: each deduplicated reference quantile is its own bin, and so is each open interval between them, plus the two open-ended outer bins (≤ 23 bins for 10 deciles). Keeps 0/1 columns at 2 bins and separates "below" and "above" a constant. Epsilon 1e-4 floors each share. NaN always has its own bin (zero contribution when absent on both sides).
+  - `ks` and `chi2` hold **p-values**. KS on an all-missing side gives `null`, counted as not drifted (the PSI NaN bin shows it).
+  - Evidently's "chi-square" is a goodness-of-fit test against the reference proportions; ours is the two-sample independence test. Test vs test, Evidently flags 3 categoricals (`NAME_INCOME_TYPE`, `OCCUPATION_TYPE`, `ORGANIZATION_TYPE`), we flag none. The JSON is the source of truth; on numerics both agree (tested).
+  - `dvc.lock` not committed for `detect_drift`: the repro also re-ran featurize/split (featurize.py changed since the lock), and those md5s are pyarrow/line-ending artifacts; restored with `git checkout`.
+  - The model is a local artifact of 2026-10-25 (`crediscore-lot2/models/lightgbm`), trained before Areej's current split: AUC 0.816 on today's test ≈ 0.820 on today's train, vs 0.754 on its own validation, so its training rows likely overlap today's test. The AUC **levels** are not meaningful; the **drops** are (same model, same rows, only the batch changes). Re-run with lot 3's final champion once rebased.
+- Mutation (own, before the review): 41 hand-written mutants on `drift.py`, on a `git archive` copy (unmutated suite first: 53 passed). Round 1: **38 killed, 3 survived**. #17 (`len(counts) < 2` → `< 1`) was equivalent: scipy already returns p = 1 for a single category, so the guard was removed. #29 (`isna().all()` → `.any()`) showed that a partly labelled batch crashed: `auc_drop` now scores only the labelled current rows (test + fix). #32 (alpha hard-coded) is killed by a new "report follows alpha" test. Round 2 on the fixed HEAD (55 passed unmutated): **39 valid, 39 killed, 0 survived** (#17/#18 no longer apply). Logs: `scratchpad/lot5/mutation_drift.log` and `mutation_drift_round2.log` of the session; script `scratchpad/lot5/mutate.py`.
+- Checks: black, flake8 and mypy clean; 392 tests pass (326 before the lot), coverage 93 %, `drift.py` 99 % (the `__main__` line).
+
 ### Lot 6 — S7: closing the loop (with Areej) · ~6 h
 
 1. Prediction drift (PSI on the probabilities, shift in acceptance rate) added to the report.
