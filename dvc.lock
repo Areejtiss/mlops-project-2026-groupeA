@@ -356,8 +356,8 @@ stages:
       size: 2731
     - path: src/crediscore/models/evaluate.py
       hash: md5
-      md5: 2a50b932a2159f43ae314eced72ca3e9
-      size: 12246
+      md5: b203d1f139452c2415004c197ff9c668
+      size: 12421
     - path: src/crediscore/models/pipeline.py
       hash: md5
       md5: b6861f441ec4080ef0df49dc8b4e187b
@@ -430,9 +430,8 @@ stages:
           - FLAG_OWN_REALTY
           - NAME_TYPE_SUITE
           - ORGANIZATION_TYPE
-        promotion:
-          max_gender_gap_pts: 10
-          age_gap_margin_pts: 2
+        promotion.age_gap_margin_pts: 2
+        promotion.max_gender_gap_pts: 10
         target: TARGET
         threshold.max_review_share: 0.15
         threshold.min_recall: 0.65
