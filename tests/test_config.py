@@ -187,3 +187,28 @@ def test_promotion_gap_bounds_are_inclusive(tmp_path: Path, value: float) -> Non
     )
     promotion = load_params(path).promotion
     assert promotion.max_gender_gap_pts == promotion.age_gap_margin_pts == value
+
+
+def test_promotion_batch_size_keys_are_loaded() -> None:
+    promotion = load_params(PARAMS_FILE).promotion
+    assert promotion.min_rows == 5000
+    assert promotion.min_group_rows == 500
+
+
+@pytest.mark.parametrize("key", ["min_rows", "min_group_rows"])
+def test_promotion_row_minimum_must_be_positive(tmp_path: Path, key: str) -> None:
+    path = write_params(tmp_path, {"promotion": {key: 0}})
+    with pytest.raises(ValidationError, match=rf"{key}\n.*greater than"):
+        load_params(path)
+
+
+def test_two_gender_groups_must_fit_in_the_minimum_batch(tmp_path: Path) -> None:
+    path = write_params(
+        tmp_path, {"promotion": {"min_rows": 999, "min_group_rows": 500}}
+    )
+    with pytest.raises(ValidationError, match=r"2 * min_group_rows"):
+        load_params(path)
+    ok = write_params(
+        tmp_path, {"promotion": {"min_rows": 1000, "min_group_rows": 500}}
+    )
+    assert load_params(ok).promotion.min_rows == 1000
