@@ -132,6 +132,28 @@ def test_thin_file_auc_when_both_classes_are_present() -> None:
     thin = np.array([1, 1, 1, 0])
     out = thin_file(y, proba, np.array([ACCEPT] * 4), thin, COSTS)
     assert out["thin_roc_auc"] == pytest.approx(1.0)
+    assert out["thin_share"] == 0.75
+
+
+def test_thin_file_companions_acceptance_of_good_payers_and_losses() -> None:
+    y = np.array([0, 0, 0, 1, 1, 0])
+    thin = np.array([1, 1, 1, 1, 1, 0])
+    d = np.array([ACCEPT, ACCEPT, REFUSE, ACCEPT, REVIEW, ACCEPT])
+    out = thin_file(y, np.full(6, 0.1), d, thin, COSTS)
+    assert out["thin_good_payer_acceptance_rate"] == pytest.approx(2 / 3)
+    assert out["thin_accepted_default_rate"] == pytest.approx(1 / 3)
+    none = thin_file(y, np.full(6, 0.1), np.array([REFUSE] * 6), thin, COSTS)
+    assert none["thin_accepted_default_rate"] is None  # nothing accepted
+
+
+def thin(accepted: int, rate: float, default_rate: float) -> dict:
+    return {
+        "thin_good_payers_accepted": accepted,
+        "scorecard_thin_good_payers_accepted": 0,
+        "thin_good_payer_acceptance_rate": rate,
+        "thin_accepted_default_rate": default_rate,
+        "good_payers_accepted_ratio": 1.62,
+    }
 
 
 # --- KPIs (L3-4, L3-6) -------------------------------------------------------
@@ -146,8 +168,26 @@ def rep(**over: float) -> dict:
         "cost_per_file": 0.27,
         "accept_all_cost_per_file": 0.40,
         "fairness": fair(5.0, 5.0, 30.0),
+        "thin_file": thin(100, 0.6, 0.05),
     }
     return {**base, **over}
+
+
+def test_thin_file_target_is_the_literal_kpi_with_companions(params: Params) -> None:
+    model = rep(thin_file=thin(4946, 0.654, 0.051))
+    base = rep(thin_file=thin(4467, 0.589, 0.060))
+    t = kpis(model, base, params)["targets"]["thin_file"]
+    # SYNOPSIS: 2x the thin good payers of "refuse without history" (0).
+    assert (t["value"], t["target"], t["met"], t["gap"]) == (4946, 0, True, 4946)
+    assert t["companion"] == {
+        "thin_good_payer_acceptance_rate": 0.654,
+        "baseline_thin_good_payer_acceptance_rate": 0.589,
+        "thin_accepted_default_rate": 0.051,
+        "baseline_thin_accepted_default_rate": 0.060,
+        "portfolio_good_payers_ratio_informative": 1.62,
+    }
+    zero = kpis(rep(thin_file=thin(0, 0.0, 0.0)), base, params)["targets"]
+    assert zero["thin_file"]["met"] is False  # accepting none is not "2x"
 
 
 def test_kpi_cost_vs_baseline_formula_and_status(params: Params) -> None:
@@ -168,6 +208,8 @@ def test_kpi_targets_directions(params: Params) -> None:
     assert out["roc_auc"]["met"] is False  # >= 0.75
     assert out["roc_auc"]["gap"] == pytest.approx(-0.01)
     assert out["pr_auc"]["met"] is True  # >= 0.25, inclusive
+    below = kpis(rep(pr_auc=0.249), rep(), params)["targets"]["pr_auc"]
+    assert below["met"] is False
     assert out["brier"]["met"] is False  # <= 0.07
     assert out["recall"]["met"] is True  # >= min_recall, inclusive
     assert out["recall"]["target"] == params.threshold.min_recall
@@ -234,6 +276,8 @@ def test_main_on_a_model_directory_writes_metrics_and_logs(
     m = json.loads(out.read_text(encoding="utf-8"))
     th = json.loads((model_dir / "thresholds.json").read_text(encoding="utf-8"))
     assert m["thresholds"] == {"low": th["low"], "high": th["high"]}
+    # The model is scored with its own thresholds.json, not the baseline's.
+    assert m["model"]["thresholds"] == {"low": th["low"], "high": th["high"]}
     assert m["n_test"] == 500
     for side in ("model", "baseline"):
         r = m[side]
@@ -379,3 +423,8 @@ def test_main_scores_the_model_and_a_logreg_baseline_with_its_own_thresholds(
     assert m["baseline"]["roc_auc"] == pytest.approx(
         roc_auc_score(y, base["model"].predict_proba(X)[:, 1])
     )
+
+
+def test_flatten_keeps_numeric_leaves_including_ints_and_bools() -> None:
+    d = {"a": 1, "b": True, "c": {"d": 2.5, "e": None, "f": "x"}, "<30": 3}
+    assert ev.flatten(d, "p_") == {"p_a": 1.0, "p_b": 1.0, "p_c.d": 2.5, "p_lt30": 3.0}
