@@ -352,8 +352,8 @@ stages:
       size: 2731
     - path: src/crediscore/models/evaluate.py
       hash: md5
-      md5: 7164c615e11e2c7472f8682bcb6d4871
-      size: 15067
+      md5: cd1deb85ddcb6e5092823fa83cffc673
+      size: 15163
     - path: src/crediscore/models/pipeline.py
       hash: md5
       md5: b6861f441ec4080ef0df49dc8b4e187b
@@ -432,5 +432,5 @@ stages:
     outs:
     - path: reports/metrics.json
       hash: md5
-      md5: 8ea778fcacc2bffdb070d29fed254893
-      size: 5494
+      md5: cfb8beb6bbfe9d5ea149e10274ceee6d
+      size: 5312
