@@ -419,3 +419,29 @@ def test_cli_without_model_has_null_auc_drop(
     assert latest["auc_drop"] is None
     assert latest["alert"] is False
     assert len(list(tmp_path.glob("*.html"))) == 1
+
+
+def test_auc_drop_uses_the_labelled_current_rows_only(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    ref, cur = synthetic_frame.iloc[:1000], synthetic_frame.iloc[1000:].copy()
+    labelled = cur.iloc[::2]
+    cur.loc[cur.index[1::2], params.target] = np.nan  # feedback not back yet
+    model = ExtSourceModel()
+    assert auc_drop(model, ref, cur, params) == pytest.approx(
+        auc_drop(model, ref, labelled, params)
+    )
+
+
+def test_report_uses_the_alpha_param(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    current = synthetic_frame.copy()
+    current["AMT_CREDIT"] += 0.1  # p-value about 0.016
+    report = compute_drift_report(synthetic_frame, current, params)
+    assert 1e-3 < report["ks"]["AMT_CREDIT"] < 0.05
+    strict = params.model_copy(
+        update={"monitoring": params.monitoring.model_copy(update={"alpha": 1e-3})}
+    )
+    assert report["drift_share"] > 0
+    assert compute_drift_report(synthetic_frame, current, strict)["drift_share"] == 0
