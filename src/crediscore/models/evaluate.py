@@ -11,7 +11,11 @@ parquet, applies the same `decide` to both on test and writes
   and cost vs "accept all";
 - thin file (D10): AUC, acceptance rate, good payers accepted vs the classic
   scorecard (refuse every thin file, `IS_THIN_FILE` from
-  `crediscore.data.featurize`, else our decision);
+  `crediscore.data.featurize`, else our decision). The SYNOPSIS target
+  ("2x the thin good payers of refuse-without-history") is read literally,
+  with companions next to it: thin good-payer acceptance rate and default
+  rate among accepted thin files, vs the baseline ("sans augmenter les
+  pertes"); the whole-portfolio ratio is informative only;
 - fairness (D5, only ACCEPTE counts as accepted, D8): gender (XNA excluded)
   and age band raw and equal-opportunity gaps, and the D5 status: gender
   both gaps <= 10 pts; age equal-opportunity gap <= baseline's + 2 pts;
@@ -131,8 +135,9 @@ def thin_file(
 
     Returns:
         Thin share, AUC (None if one class only), acceptance rate, good payers
-        accepted (thin and all) for us and the scorecard, their ratio, and the
-        scorecard cost per file.
+        accepted (thin and all) for us and the scorecard, their ratio, the
+        thin good-payer acceptance rate, the default rate among accepted
+        thin files (None if none), and the scorecard cost per file.
     """
     y, p, d = np.asarray(y), np.asarray(proba, dtype=float), np.asarray(decisions)
     t = np.asarray(thin).astype(bool)
@@ -140,6 +145,7 @@ def thin_file(
     good = y == 0
     ours = int(np.sum(good & (d == ACCEPT)))
     theirs = int(np.sum(good & (scorecard == ACCEPT)))
+    thin_good, thin_acc = good & t, t & (d == ACCEPT)
     return {
         "thin_share": float(t.mean()),
         "thin_roc_auc": (
@@ -149,6 +155,12 @@ def thin_file(
         "thin_good_payers_accepted": int(np.sum(good & t & (d == ACCEPT))),
         "scorecard_thin_good_payers_accepted": int(
             np.sum(good & t & (scorecard == ACCEPT))
+        ),
+        "thin_good_payer_acceptance_rate": (
+            float(np.mean(d[thin_good] == ACCEPT)) if thin_good.any() else None
+        ),
+        "thin_accepted_default_rate": (
+            float(np.mean(y[thin_acc] == 1)) if thin_acc.any() else None
         ),
         "good_payers_accepted": ours,
         "scorecard_good_payers_accepted": theirs,
@@ -230,14 +242,48 @@ def kpis(
         / model["accept_all_cost_per_file"],
         "d5": d5_status(model["fairness"], baseline["fairness"]),
         "targets": {
-            k: {
-                "value": values[k],
-                "target": t,
-                # rounded: (0.255 - 0.30) / 0.30 must meet -0.15 exactly
-                "met": bool(_OPS[op](round(values[k], 12), t)),
-                "gap": values[k] - t,
-            }
-            for k, (op, t) in targets.items()
+            **{
+                k: {
+                    "value": values[k],
+                    "target": t,
+                    # rounded: (0.255 - 0.30) / 0.30 must meet -0.15 exactly
+                    "met": bool(_OPS[op](round(values[k], 12), t)),
+                    "gap": values[k] - t,
+                }
+                for k, (op, t) in targets.items()
+            },
+            "thin_file": thin_target(model["thin_file"], baseline["thin_file"]),
+        },
+    }
+
+
+def thin_target(model: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
+    """SYNOPSIS thin-file KPI, read literally, with its companions (D10).
+
+    Target: at least 2x the thin good payers accepted by "refuse without
+    history" (always 0), and more than none. Companions, reported next to it:
+    thin good-payer acceptance rate and default rate among accepted thin
+    files, model vs baseline; the whole-portfolio ratio is informative only.
+    """
+    value = model["thin_good_payers_accepted"]
+    target = 2 * model["scorecard_thin_good_payers_accepted"]
+    return {
+        "value": value,
+        "target": target,
+        "met": bool(value >= target and value > 0),
+        "gap": value - target,
+        "companion": {
+            "thin_good_payer_acceptance_rate": model["thin_good_payer_acceptance_rate"],
+            "baseline_thin_good_payer_acceptance_rate": baseline[
+                "thin_good_payer_acceptance_rate"
+            ],
+            "thin_accepted_default_rate": model["thin_accepted_default_rate"],
+            "baseline_thin_accepted_default_rate": baseline[
+                "thin_accepted_default_rate"
+            ],
+            "portfolio_good_payers_ratio_informative": model[
+                "good_payers_accepted_ratio"
+            ],
         },
     }
 
