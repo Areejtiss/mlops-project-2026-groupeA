@@ -49,7 +49,7 @@ from lightgbm import LGBMClassifier
 from matplotlib.figure import Figure
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from xgboost import XGBClassifier
+from xgboost import DMatrix, XGBClassifier
 
 from crediscore.config import load_params
 from crediscore.models.evaluate import registry_version
@@ -72,6 +72,19 @@ def _raw(value: Any) -> float | int | str | None:
         return None
     plain: float | int | str = value.item() if isinstance(value, np.generic) else value
     return plain
+
+
+def _raw_margin(est: Any, Xt: npt.NDArray[np.float64]) -> float:
+    """First row's raw margin (log-odds), or class-1 probability for RF."""
+    if isinstance(est, LGBMClassifier):
+        out = est.booster_.predict(Xt, raw_score=True)
+    elif isinstance(est, XGBClassifier):
+        out = est.get_booster().predict(DMatrix(Xt), output_margin=True)
+    elif isinstance(est, LogisticRegression):
+        out = est.decision_function(Xt)
+    else:  # RandomForest: probability space (contract 2 section 6)
+        out = est.predict_proba(Xt)[:, 1]
+    return float(np.asarray(out)[0])
 
 
 class Explainer:
@@ -130,12 +143,11 @@ class Explainer:
             self.unit = "probability"
         else:
             raise ValueError(f"no SHAP explainer for {type(est).__name__}")
-        # Base value from the model itself, on an all-zero row: shap 0.51
-        # reports XGBoost 3's expected_value off by a constant (~0.04 log-odds).
+        # Base value from the model's own raw margin on an all-zero row, for
+        # robustness: shap 0.51's expected_value for XGBoost 3 can be off by a
+        # constant that varies with the trees (0 with scale_pos_weight).
         zero = np.zeros((1, len(owners)))
-        p = float(est.predict_proba(zero)[0, 1])
-        margin = p if self.unit == "probability" else float(np.log(p / (1 - p)))
-        self.base = margin - float(self._values(zero).sum())
+        self.base = _raw_margin(est, zero) - float(self._values(zero).sum())
 
     def _transform(self, frame: pd.DataFrame) -> npt.NDArray[np.float64]:
         Xt = self._pre.transform(frame)
