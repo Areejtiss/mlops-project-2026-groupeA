@@ -45,6 +45,8 @@ EPSILON = 1e-4
 _NAN_BIN = -1
 # Half-width of the single bin of a constant column, relative to its value.
 _CONSTANT_PAD = 1e-6
+# auc_drop needs at least this many defaults in each labelled batch.
+MIN_POSITIVES = 50
 
 
 def _numeric_edges(reference: pd.Series, bins: int) -> npt.NDArray[np.float64]:
@@ -140,12 +142,14 @@ def ks_test(reference: pd.Series, current: pd.Series) -> float | None:
         current: Current values of the same feature.
 
     Returns:
-        The p-value, or None when one side has no value at all (the PSI, which
-        counts missing values, still shows that drift).
+        The p-value; 0.0 (certain drift) when exactly one side has no value;
+        None when neither side has a value.
     """
     ref, cur = reference.dropna(), current.dropna()
-    if ref.empty or cur.empty:
+    if ref.empty and cur.empty:
         return None
+    if ref.empty or cur.empty:
+        return 0.0
     return float(stats.ks_2samp(ref, cur).pvalue)
 
 
@@ -160,7 +164,8 @@ def chi2_test(reference: pd.Series, current: pd.Series) -> float:
         current: Current values of the same feature.
 
     Returns:
-        The p-value; 1.0 when both batches hold a single category.
+        The p-value; 1.0 when both batches hold a single category. With two
+        categories (1 degree of freedom) scipy applies the Yates correction.
     """
     # A single category gives dof 0, for which scipy returns p = 1.
     counts = _counts(reference, current)
@@ -171,7 +176,8 @@ def drift_share(p_values: Mapping[str, float | None], alpha: float) -> float:
     """Share of features whose p-value is strictly below alpha.
 
     Args:
-        p_values: p-value per model feature (None = untested, not drifted).
+        p_values: p-value per model feature (None = no value on either
+            side, not drifted).
         alpha: Significance level (`monitoring.alpha`).
 
     Returns:
@@ -191,25 +197,31 @@ def is_alert(
     psi_values: Mapping[str, float],
     drop: float | None,
     config: MonitoringConfig,
+    *,
+    n_rows: int,
 ) -> bool:
     """Alert rule of contract 4.
 
     Alert when `share` >= `drift_share_alert`, or the PSI of one key feature
     >= `psi_alert`, or `drop` > `auc_drop_alert` (when the AUC is known).
+    The first two rules only apply when `n_rows` >= `min_rows`: on a small
+    batch the tests and the PSI are too noisy to retrain on.
 
     Args:
         share: The batch's drift_share.
         psi_values: PSI per feature.
-        drop: Reference AUC minus current AUC, or None without labels.
+        drop: Reference AUC minus current AUC, or None when not computable.
         config: The `monitoring` parameters.
+        n_rows: Rows of the smaller of the two batches.
 
     Returns:
         True if the batch must raise the alert (retrain).
     """
-    return (
-        share >= config.drift_share_alert
-        or any(psi_values[f] >= config.psi_alert for f in config.key_features)
-        or (drop is not None and drop > config.auc_drop_alert)
+    data_drift = share >= config.drift_share_alert or any(
+        psi_values[f] >= config.psi_alert for f in config.key_features
+    )
+    return (n_rows >= config.min_rows and data_drift) or (
+        drop is not None and drop > config.auc_drop_alert
     )
 
 
@@ -225,17 +237,25 @@ def auc_drop(
         params: Validated parameters (features and target name).
 
     Returns:
-        The AUC drop (> 0 = the model got worse), or None when the current
-        batch has no label. Current rows without a label are left out.
-
-    Raises:
-        ValueError: If a labelled batch holds a single class.
+        The AUC drop (> 0 = the model got worse), or None when it is not
+        computable: a batch without the label column, or whose labelled rows
+        are fewer than `monitoring.min_labelled`, hold fewer than
+        MIN_POSITIVES defaults or a single class. Rows without a label are
+        left out.
     """
-    if params.target not in current or current[params.target].isna().all():
-        return None
     aucs = []
-    for batch in (reference, current.dropna(subset=[params.target])):
-        X, y = prepare_xy(batch, params)
+    for batch in (reference, current):
+        if params.target not in batch:
+            return None
+        labelled = batch.dropna(subset=[params.target])
+        X, y = prepare_xy(labelled, params)
+        positives = int(y.sum())
+        if (
+            len(y) < params.monitoring.min_labelled
+            or positives < MIN_POSITIVES
+            or positives == len(y)
+        ):
+            return None
         aucs.append(roc_auc_score(y, model.predict_proba(X)[:, 1]))
     return float(aucs[0] - aucs[1])
 
@@ -258,11 +278,19 @@ def compute_drift_report(
         current: Current batch with the same columns.
         params: Validated parameters.
         auc_drop: Result of `auc_drop`, None without labels.
-        now: Report time; defaults to now. Written in UTC, ISO 8601.
+        now: Report time, timezone-aware; defaults to now. Written in UTC,
+            ISO 8601, to the second.
 
     Returns:
         A JSON-ready dict with exactly the keys of `REPORT_KEYS`.
+
+    Raises:
+        ValueError: If a batch has no row, or `now` has no timezone.
     """
+    if reference.empty or current.empty:
+        raise ValueError("empty batch: the reference and current need rows")
+    if now is not None and now.utcoffset() is None:
+        raise ValueError("now must carry a timezone (e.g. datetime.now(UTC))")
     cfg = params.monitoring
     psi_values = {
         f: psi(reference[f], current[f], cfg.psi_bins) for f in params.features.all
@@ -278,7 +306,13 @@ def compute_drift_report(
         "ks": ks,
         "chi2": chi2,
         "auc_drop": auc_drop,
-        "alert": is_alert(share, psi_values, auc_drop, cfg),
+        "alert": is_alert(
+            share,
+            psi_values,
+            auc_drop,
+            cfg,
+            n_rows=min(len(reference), len(current)),
+        ),
     }
 
 
