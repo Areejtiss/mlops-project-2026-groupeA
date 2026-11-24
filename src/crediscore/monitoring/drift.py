@@ -5,21 +5,37 @@ writes the drift report JSON consumed by Iyed (Prometheus gauges) and Areej
 (monitoring flow: retrain on alert).
 
 Usage:
-    from crediscore.monitoring.drift import psi
+    poetry run python -m crediscore.monitoring.drift
+        --reference data/processed/test.parquet
+        --current data/simulated/economic_crisis.parquet
+        [--model models/lightgbm | --model models:/crediscore@champion]
+        [--out-dir reports/drift] [--params params.yaml]
+    -> writes <out-dir>/<YYYY-MM-DD_HHMMSS>.json and .html (Evidently, UTC
+       time of the report) and <out-dir>/latest.json (same JSON). The exit
+       code is 0 whatever the alert: the alert lives in the JSON.
 
-    psi(reference["AMT_INCOME_TOTAL"], current["AMT_INCOME_TOTAL"], bins=10)
+In code:
+    report = compute_drift_report(reference, current, params,
+                                  auc_drop=auc_drop(model, reference, current,
+                                                    params))
 """
 
+import argparse
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from evidently import DataDefinition, Dataset, Report
+from evidently.presets import DataDriftPreset
 from scipy import stats
 from sklearn.metrics import roc_auc_score
 
-from crediscore.config import MonitoringConfig, Params
+from crediscore.config import MonitoringConfig, Params, load_params
+from crediscore.models.evaluate import load_model
 from crediscore.models.train import prepare_xy
 
 REPORT_KEYS = ("timestamp", "drift_share", "psi", "ks", "chi2", "auc_drop", "alert")
@@ -248,3 +264,76 @@ def compute_drift_report(
         "auc_drop": auc_drop,
         "alert": is_alert(share, psi_values, auc_drop, cfg),
     }
+
+
+def write_html(
+    reference: pd.DataFrame, current: pd.DataFrame, params: Params, path: Path
+) -> None:
+    """Evidently 0.7 `DataDriftPreset` HTML report on the model features.
+
+    Same tests and alpha as our JSON (KS numeric, chi2 categorical), so the
+    two agree on which feature drifted; Evidently's own drift_share threshold
+    is set to `monitoring.drift_share_alert`.
+
+    Args:
+        reference: Reference batch.
+        current: Current batch.
+        params: Validated parameters.
+        path: HTML file to write.
+    """
+    cfg = params.monitoring
+    definition = DataDefinition(
+        numerical_columns=params.features.numeric,
+        categorical_columns=params.features.categorical,
+    )
+    preset = DataDriftPreset(
+        columns=params.features.all,
+        num_method="ks",
+        cat_method="chisquare",
+        threshold=cfg.alpha,
+        drift_share=cfg.drift_share_alert,
+    )
+    features = params.features.all
+    snapshot = Report([preset]).run(
+        Dataset.from_pandas(current[features], data_definition=definition),
+        Dataset.from_pandas(reference[features], data_definition=definition),
+    )
+    snapshot.save_html(str(path))
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Compare two parquet batches, write the JSON report and the HTML."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--reference", type=Path, required=True)
+    parser.add_argument("--current", type=Path, required=True)
+    parser.add_argument("--model", help="train output dir or models:/ URI")
+    parser.add_argument("--out-dir", type=Path, default=Path("reports/drift"))
+    parser.add_argument("--params", type=Path, default=Path("params.yaml"))
+    args = parser.parse_args(argv)
+
+    params = load_params(args.params)
+    reference = pd.read_parquet(args.reference)
+    current = pd.read_parquet(args.current)
+    drop = (
+        auc_drop(load_model(args.model)[0], reference, current, params)
+        if args.model
+        else None
+    )
+    report = compute_drift_report(reference, current, params, auc_drop=drop)
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.fromisoformat(report["timestamp"]).strftime("%Y-%m-%d_%H%M%S")
+    text = json.dumps(report, indent=2, allow_nan=False) + "\n"
+    for name in (f"{stamp}.json", "latest.json"):
+        (args.out_dir / name).write_text(text, encoding="utf-8")
+    write_html(reference, current, params, args.out_dir / f"{stamp}.html")
+
+    top = sorted(report["psi"].items(), key=lambda kv: kv[1], reverse=True)[:5]
+    print(f"Wrote {args.out_dir / stamp}.json/.html and latest.json")
+    print(f"  drift_share {report['drift_share']:.3f}  auc_drop {drop}")
+    print("  top PSI " + ", ".join(f"{f} {v:.3f}" for f, v in top))
+    print(f"  alert {report['alert']}")
+
+
+if __name__ == "__main__":
+    main()
