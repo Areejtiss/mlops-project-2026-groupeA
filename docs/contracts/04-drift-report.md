@@ -30,7 +30,7 @@ Les clés sont **exactement** celles-ci, dans cet ordre. JSON strict : pas de `N
 | `psi` | objet `{feature: nombre}` | ≥ 0, fini | PSI de chaque feature du modèle (numérique **et** catégorielle), 41 entrées |
 | `ks` | objet `{feature: nombre ou null}` | p-value dans [0, 1] | Test de Kolmogorov-Smirnov à deux échantillons, features **numériques** (31 entrées) |
 | `chi2` | objet `{feature: nombre}` | p-value dans [0, 1] | Test du χ² d'indépendance lot × catégorie, features **catégorielles** (10 entrées) |
-| `auc_drop` | nombre ou `null` | points d'AUC (0,03 = 3 points) | AUC du modèle sur la référence − AUC du même modèle sur le lot courant. Positif = le modèle se dégrade. `null` sans modèle ou sans labels dans le lot courant |
+| `auc_drop` | nombre ou `null` | points d'AUC (0,03 = 3 points) | AUC du modèle sur la référence − AUC du même modèle sur le lot courant. Positif = le modèle se dégrade. `null` sans modèle ou sans aucun label dans le lot courant ; les lignes courantes sans label sont ignorées |
 | `alert` | booléen | | Règle de la section 5 |
 
 `ks` et `chi2` contiennent des **p-values**, pas des statistiques : plus la valeur est petite, plus la dérive est certaine. Les colonnes hors modèle (`SK_ID_CURR`, `TARGET`, `CODE_GENDER`) ne sont jamais comparées.
@@ -83,7 +83,7 @@ alert = drift_share >= 0.30                                (monitoring.drift_sha
 
 ## 8. Exemple réel
 
-Lot « crise économique » d'Areej (`dvc repro detect_drift`, `drift.seed = 7`) contre `data/processed/test.parquet` (20 000 lignes chacun), avec un modèle LightGBM local (`--model models/lightgbm`). Valeurs arrondies pour la lecture ; le fichier réel garde la précision complète.
+Lot « crise économique » d'Areej (`dvc repro detect_drift`, `drift.seed = 7`) contre `data/processed/test.parquet` (20 000 lignes chacun), avec un modèle LightGBM local (`--model models/lightgbm`, artefact de travail : ses niveaux d'AUC ne font pas foi, seule la baisse compte). Valeurs arrondies pour la lecture ; le fichier réel garde la précision complète.
 
 ```json
 {
