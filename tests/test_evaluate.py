@@ -273,6 +273,8 @@ def test_main_on_a_model_directory_writes_metrics_and_logs(
             str(out),
         ]
     )
+    # LF on every OS: the file is in Git (eol=lf) and DVC hashes its bytes.
+    assert b"\r\n" not in out.read_bytes()
     m = json.loads(out.read_text(encoding="utf-8"))
     th = json.loads((model_dir / "thresholds.json").read_text(encoding="utf-8"))
     assert m["thresholds"] == {"low": th["low"], "high": th["high"]}
