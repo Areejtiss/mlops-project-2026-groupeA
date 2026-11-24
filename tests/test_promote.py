@@ -21,7 +21,9 @@ from crediscore.models.threshold import zone_metrics
 from conftest import make_synthetic_frame
 
 PARAMS_FILE = Path(__file__).resolve().parents[1] / "params.yaml"
-PROMO = PromotionConfig(max_gender_gap_pts=10, age_gap_margin_pts=2)
+PROMO = PromotionConfig(
+    max_gender_gap_pts=10, age_gap_margin_pts=2, min_rows=10, min_group_rows=5
+)
 
 
 # --- decide (pure) -------------------------------------------------------------
@@ -100,7 +102,9 @@ def test_no_champion_yet_only_the_fairness_gates_apply() -> None:
 
 
 def test_the_tolerances_come_from_the_promotion_config() -> None:
-    strict = PromotionConfig(max_gender_gap_pts=4, age_gap_margin_pts=0)
+    strict = PromotionConfig(
+        max_gender_gap_pts=4, age_gap_margin_pts=0, min_rows=10, min_group_rows=5
+    )
     out = pr.decide(scores(), None, age_anchor_pts=33.0, promotion=strict)
     assert out["failed"] == ["gender_raw_gap", "gender_eo_gap"]
     assert out["checks"]["age_eo_gap"]["limit"] == 33.0

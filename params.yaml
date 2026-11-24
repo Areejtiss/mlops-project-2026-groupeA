@@ -99,6 +99,8 @@ threshold:
 promotion:
   max_gender_gap_pts: 10  # gender raw and equal-opportunity gaps, inclusive
   age_gap_margin_pts: 2   # age equal-opportunity gap <= baseline's + this
+  min_rows: 5000          # smaller batch: not promoted (gaps too noisy)
+  min_group_rows: 500     # rows per gender group (XNA excluded), at least 2 groups
 
 # Drift simulation (monitoring/simulator.py), used to test drift detection.
 drift:

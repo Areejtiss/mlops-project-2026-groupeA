@@ -95,10 +95,18 @@ class ThresholdConfig(StrictModel):
 
 
 class PromotionConfig(StrictModel):
-    """Tolerances of the promotion gate (D5), in percentage points."""
+    """Promotion gate (D5): gap tolerances in points, minimum batch sizes."""
 
     max_gender_gap_pts: float = Field(ge=0, le=100)
     age_gap_margin_pts: float = Field(ge=0, le=100)
+    min_rows: int = Field(gt=0)
+    min_group_rows: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def two_groups_fit_in_the_batch(self) -> Self:
+        if self.min_rows < 2 * self.min_group_rows:
+            raise ValueError("min_rows must be at least twice min_group_rows")
+        return self
 
 
 class EconomicCrisisConfig(StrictModel):
