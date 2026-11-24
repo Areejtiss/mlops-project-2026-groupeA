@@ -145,9 +145,8 @@ def chi2_test(reference: pd.Series, current: pd.Series) -> float:
     Returns:
         The p-value; 1.0 when both batches hold a single category.
     """
+    # A single category gives dof 0, for which scipy returns p = 1.
     counts = _counts(reference, current)
-    if len(counts) < 2:
-        return 1.0
     return float(stats.chi2_contingency(counts.T.to_numpy()).pvalue)
 
 
