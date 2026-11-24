@@ -178,11 +178,16 @@ stages:
       --out-dir reports/drift
     deps:
       - src/crediscore/monitoring/drift.py
+      - src/crediscore/config.py
+      - src/crediscore/models/evaluate.py   # load_model
+      - src/crediscore/models/train.py      # prepare_xy
       - data/processed/test.parquet
       - data/simulated/economic_crisis.parquet
     params:
       - features
       - monitoring
+    # latest.json carries a timestamp, so it is not reproducible byte for
+    # byte: uncached, git-ignored, regenerated at each run.
     outs:
       - reports/drift/latest.json:
           cache: false
