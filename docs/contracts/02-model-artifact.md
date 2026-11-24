@@ -33,8 +33,7 @@
 ## 3. Entrée
 
 - **Exactement les colonnes `params.features.all`** (D2 option b), dans cet ordre : les 31 numériques puis les 10 catégorielles de `params.yaml`.
-- Les 8 features dérivées (`ANNUITY_INCOME_RATIO`, `CREDIT_INCOME_RATIO`, `CREDIT_TERM`, `AGE_YEARS`, `EMPLOYED_YEARS`, `DAYS_EMPLOYED_ANOM`, `EXT_SOURCE_MISSING_COUNT`, `IS_THIN_FILE`) **ne sont pas calculées par l'artefact**. Elles sont produites par la fonction partagée `add_derived_features(df)` d'Areej. Cette fonction est appelée par l'étape `featurize` **et** par l'API avant le modèle. Un test de parité (les deux chemins donnent des colonnes identiques) est **à écrire** quand l'étape `featurize` d'Areej et l'API d'Iyed existeront ; il n'existe pas encore.
-- Types (signature MLflow, construite explicitement par `crediscore.models.train.build_signature`, pas inférée) :
+- Les 8 features dérivées (`ANNUITY_INCOME_RATIO`, `CREDIT_INCOME_RATIO`, `CREDIT_TERM`, `AGE_YEARS`, `EMPLOYED_YEARS`, `DAYS_EMPLOYED_ANOM`, `EXT_SOURCE_MISSING_COUNT`, `IS_THIN_FILE`) **ne sont pas calculées par l'artefact**. Elles sont produites par les fonctions partagées d'Areej, dans cet ordre : `crediscore.data.featurize.fix_days_employed(df)` puis `add_derived_features(df)`. Ces fonctions sont appelées par l'étape `featurize` **et** par l'API avant le modèle. Un test de parité (les deux chemins donnent des colonnes identiques) est **à écrire** quand l'API d'Iyed existera ; il n'existe pas encore.- Types (signature MLflow, construite explicitement par `crediscore.models.train.build_signature`, pas inférée) :
 
 | Colonnes | Type | Manquant autorisé |
 |---|---|---|
@@ -129,7 +128,7 @@ En attendant le Registry (lot 3), l'API peut servir le modèle produit par `trai
 poetry run python -m crediscore.models.train --model logreg     # -> models/model.joblib, models/thresholds.json, models/metrics.json
 ```
 
-**Chemin de service (D2), dans cet ordre :** données brutes de la requête → `add_derived_features` → modèle → `decide`.
+**Chemin de service (D2), dans cet ordre :** données brutes de la requête → `fix_days_employed` → `add_derived_features` → modèle → `decide`.
 
 ```python
 import json
@@ -138,7 +137,7 @@ import joblib
 import pandas as pd
 
 from crediscore.config import load_params
-from crediscore.data.features import add_derived_features
+from crediscore.data.featurize import add_derived_features, fix_days_employed
 from crediscore.models.threshold import decide
 
 params = load_params()
@@ -146,7 +145,7 @@ model = joblib.load("models/model.joblib")              # CalibratedClassifierCV
 th = json.loads(open("models/thresholds.json", encoding="utf-8").read())
 
 raw = pd.DataFrame([request_fields])                     # champs bruts validés par Pydantic, None si absent
-X = add_derived_features(raw)[params.features.all]
+X = add_derived_features(fix_days_employed(raw))[params.features.all]
 X[params.features.numeric] = X[params.features.numeric].astype("float64")
 proba = model.predict_proba(X)[:, 1]                     # float64, NON arrondie
 decision = decide(proba, th["low"], th["high"])[0]       # "ACCEPTE" / "A_ETUDIER" / "REFUSE"

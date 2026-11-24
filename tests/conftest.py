@@ -31,8 +31,9 @@ def make_synthetic_frame(params: Params, n: int = 2000) -> pd.DataFrame:
         df.loc[rng.uniform(size=n) < missing, col] = np.nan
     ext = df[["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"]]
     df["EXT_SOURCE_MISSING_COUNT"] = ext.isna().sum(axis=1).astype(float)
-    thin = ext["EXT_SOURCE_1"].isna() & ext["EXT_SOURCE_3"].isna()
-    df["IS_THIN_FILE"] = thin.astype(float)
+    # Rule of crediscore.data.featurize (D10). AMT_REQ_CREDIT_BUREAU_YEAR is
+    # never 0 or NaN in this frame, so only the EXT_SOURCE part applies.
+    df["IS_THIN_FILE"] = (df["EXT_SOURCE_MISSING_COUNT"] >= 2).astype(float)
     df["DAYS_EMPLOYED_ANOM"] = (rng.uniform(size=n) < 0.18).astype(float)
     df["AGE_YEARS"] = rng.uniform(21, 69, size=n)
     for col in params.features.categorical:

@@ -8,7 +8,8 @@ curves, the model (cloudpickle, all-optional signature, contract 2) and tags.
 The model is NOT registered here (registry: lot 3).
 
 The input parquet is featurized (Areej's output): it already has
-`params.features.all`, built by `crediscore.data.features.add_derived_features`.
+`params.features.all`, built by `crediscore.data.featurize` (`fix_days_employed`
+then `add_derived_features`).
 
 Usage:
     poetry run python -m crediscore.models.train --model logreg
