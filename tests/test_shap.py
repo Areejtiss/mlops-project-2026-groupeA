@@ -2,6 +2,7 @@
 
 import time
 from pathlib import Path
+from typing import Any
 
 import mlflow
 import numpy as np
@@ -334,3 +335,70 @@ def test_main_without_tracking_only_writes_the_png(
         ]
     )
     assert out.stat().st_size > 1000
+
+
+# --- correction pass: raw margins, LogReg reference ---------------------------
+
+
+def raw_margin(model: object, X: pd.DataFrame) -> np.ndarray:
+    """The classifier's own margin (log-odds) or class-1 probability (RF)."""
+    import xgboost
+
+    pipe = model.calibrated_classifiers_[0].estimator  # type: ignore[attr-defined]
+    Xt = pipe.named_steps["pre"].transform(X)
+    Xt = Xt.toarray() if hasattr(Xt, "toarray") else Xt
+    est = pipe.named_steps["model"]
+    name = type(est).__name__
+    if name == "LGBMClassifier":
+        return np.asarray(est.booster_.predict(Xt, raw_score=True))
+    if name == "XGBClassifier":
+        dm = xgboost.DMatrix(Xt)
+        return np.asarray(est.get_booster().predict(dm, output_margin=True))
+    if name == "LogisticRegression":
+        return np.asarray(est.decision_function(Xt))
+    return np.asarray(est.predict_proba(Xt)[:, 1])
+
+
+@pytest.mark.parametrize("name", list(SMALL))
+def test_additivity_against_the_raw_margin(
+    data: tuple[Params, pd.DataFrame], models: dict[str, object], name: str
+) -> None:
+    X = rows(data)
+    base, contrib = Explainer(models[name]).contributions(X)
+    expected = raw_margin(models[name], X)
+    tol = 1e-5 if name == "xgboost" else 1e-9  # XGBoost predicts in float32
+    assert base + contrib.sum(axis=1).to_numpy() == pytest.approx(expected, abs=tol)
+
+
+@pytest.mark.parametrize("name", ["logreg", "lightgbm", "xgboost"])
+def test_log_odds_base_never_goes_through_predict_proba(
+    models: dict[str, object], name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calibrated: Any = models[name]
+    pipe = calibrated.calibrated_classifiers_[0].estimator
+    est = pipe.named_steps["model"]
+
+    def refuse(*a: object, **k: object) -> None:
+        raise AssertionError("base value taken from predict_proba")
+
+    monkeypatch.setattr(type(est), "predict_proba", refuse)
+    Explainer(models[name])
+
+
+def test_logreg_contributions_are_coef_times_the_transformed_input(
+    data: tuple[Params, pd.DataFrame], models: dict[str, object]
+) -> None:
+    # No background: the reference is 0 in the transformed space (scaled
+    # numeric = training mean, one-hot = no category).
+    params, _ = data
+    X = rows(data)
+    logreg: Any = models["logreg"]
+    pipe = logreg.calibrated_classifiers_[0].estimator
+    Xt = pipe.named_steps["pre"].transform(X)
+    Xt = Xt.toarray() if hasattr(Xt, "toarray") else Xt
+    terms = Xt * pipe.named_steps["model"].coef_[0]
+    base, contrib = Explainer(models["logreg"]).contributions(X)
+    numeric = params.features.numeric
+    assert contrib[numeric].to_numpy() == pytest.approx(terms[:, : len(numeric)])
+    assert contrib.sum(axis=1).to_numpy() == pytest.approx(terms.sum(axis=1))
+    assert base == pytest.approx(pipe.named_steps["model"].intercept_[0])
