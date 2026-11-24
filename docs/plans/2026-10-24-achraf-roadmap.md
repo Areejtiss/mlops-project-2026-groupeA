@@ -7,6 +7,12 @@
 - **Base read:** branch `dev` = `main` = `0de3860` (2026-10-11); `origin/feat/iyed-serving-cicd` = `91e5e1b` (2026-10-24, CI only, not merged).
 - **Owner:** Achraf Gharbi. **Written:** 2026-10-24.
 - **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2), age rule anchored to the baseline the same day. Lot 2 implemented 2026-10-25 (see "Lot 2 progress"); `dvc.yaml` train stage deferred until Areej's pipeline exists.
+- **Integration with `dev` (2026-11-24).** The three branches are rebased onto `origin/dev` = `3ed70dc` (Areej's PR #2, DVC pipeline, and PR #3, drift simulator). Consequences:
+  - **D2:** Areej's `crediscore.data.featurize` (`fix_days_employed` then `add_derived_features`) is THE shared function; our `data/features.py` is removed. Its float64 cast of the raw inputs (one-row requests with `None`) is ported into her file, in a commit for her review.
+  - **D10:** her merged thin-file definition is adopted (at least 2 of 3 `EXT_SOURCE` missing, or `AMT_REQ_CREDIT_BUREAU_YEAR` NaN or 0): 39.7 % of the real train split, against 11.9 % for our old stand-in.
+  - **D6:** PRs target `dev` (team practice).
+  - Real data: `dvc repro split` produces `data/processed/train.parquet` / `test.parquet` (80 000 / 20 000 rows, every `params.features.all` column); our throwaway prep is gone. Our model-split tests are now `tests/test_model_split.py` (Areej's `tests/test_split.py` tests her split stage).
+  - Commit SHAs quoted below predate the rebase (e.g. `af69614` is now `8e4041c`).
 
 ---
 
@@ -24,7 +30,7 @@
 | The cost is a flat 5:1 ratio | `params.yaml:80-82` |
 | Thresholds are `null`. The comment uses a third label spelling, `A ETUDIER` | `params.yaml:84-88` |
 | Only `CODE_GENDER` is sensitive. Age bands come from `AGE_YEARS`, which is also a model feature | `params.yaml:19-20, 61` |
-| Only `application_train` is downloaded (no `bureau.csv`), so thin-file is defined from `EXT_SOURCE` only | `download.py:22` |
+| Only `application_train` is downloaded (no `bureau.csv`), so thin-file is defined from `EXT_SOURCE` only (2026-11-24: Areej's definition also uses `AMT_REQ_CREDIT_BUREAU_YEAR`, D10) | `download.py:22` |
 | **This machine:** no Python, no Poetry, no `.venv`, Docker daemon stopped, no `.env`, no data | checked 2026-10-24 |
 | `git config user.email` = `achraf.gharbi@mafrah.com`; SYNOPSIS lists `gharbiachraf6@gmail.com` | `SYNOPSIS.md:11` |
 
@@ -78,11 +84,11 @@ Wording for non-developers in each line. Technical decisions are at the end.
 | D3 | With 3 zones (accept / review / refuse), what does one manual review cost, compared to a missed default (5) and a wrongly refused good client (1)? | a) add `cost.cost_review` and optimize both cut-offs · b) a fixed grey band around one cut-off · c) review band sized by analyst capacity (e.g. ≤ 10 % of files) | **a) + a capacity cap (c)**. With review = 0.3 the optimum is "accept if risk < 6 %, refuse if > 70 %": about **half** the applicants would go to review, which is unrealistic. A cap like "≤ 15 % of files to review" keeps it usable. Share of files in review shown with the numbers in lot 1 | Achraf + Areej (params) | lot 2 |
 | D4 | Exact decision strings in the API answer | a) `ACCEPTE` / `A_ETUDIER` / `REFUSE` · b) `ACCEPTÉ` / `À ÉTUDIER` / `REFUSÉ` (roadmap and SYNOPSIS) | **a)**: no accents or spaces in a machine code; accents in the report and UI only. Also fix `params.yaml:85` | **Whole team** (contract 3) | lot 1 |
 | D5 | Fairness gate for promotion. SYNOPSIS: "acceptance-rate gap ≤ 10 pts". Under-30s default about 2× more than over-50s, and age is itself a model feature, so the age gap may exceed 10 pts at any useful cut-off and **no model would ever be promoted** | a) measure on the baseline first (lot 1), then decide · b) gate on "equal opportunity": among clients who **did** repay, the acceptance gap between groups ≤ 10 pts; report the raw gap too · c) keep the raw gap | **Decided 2026-10-25 (human):** gender, absolute gate, raw ≤ 10 pts **and** equal opportunity ≤ 10 pts (XNA excluded); age, non-regression anchored to the baseline: challenger's equal-opportunity gap ≤ baseline's + 2 pts (≤ 34.9 pts until lot 3 recomputes the baseline on the final test split), fixed, also for the first promotion; both age gaps published and tracked. Tell the teacher | Team | lot 4 |
-| D6 | PR target branch | a) `main` · b) `dev`, then release to `main` | **a)**: CI only runs on PRs to `main`. Ask Iyed to add `feature/**` to the push trigger and to fix `cache: poetry` | Team | first PR |
+| D6 | PR target branch | a) `main` · b) `dev`, then release to `main` | ~~a)~~ **b), revised 2026-11-24:** the team merges PRs into `dev` (PR #2, #3); our PRs target `dev`. Ask Iyed to run CI on PRs to `dev`, add `feature/**` to the push trigger and fix `cache: poetry` | Team | first PR |
 | D7 | Real dates of S3…S8, Jalon 2, and the defense | — | needed to date the lots and re-plan | Human | planning |
 | D8 | With 3 zones, how do the SYNOPSIS KPIs count "to review"? Recall ≥ 65 %: is a default sent to review "detected"? Acceptance rate and fairness: is review "accepted"? | a) review = detected for recall, **not** accepted for acceptance/fairness (prudent reading) · b) review = accepted everywhere · c) KPIs computed on a 2-zone cut (review merged into refuse) | **a)**. The single cost-optimal cut-off (risk 1/6) gives a recall of only ~50 % at AUC 0.76, so the 65 % target needs either a) or a recall constraint in the optimizer (applied anyway) | Team | lot 2 |
 | D9 | Where do the cut-offs live? They are an **output** of training; writing them into `params.yaml` (an input of training) creates a DVC loop and two copies that can disagree | a) with the model version (tags + `thresholds.json`); `params.yaml` `threshold` becomes an optional manual override · b) in `params.yaml`, copied by hand | **a)**: PR to Areej to document the override | Achraf + Areej | lot 2 |
-| D10 | Thin-file KPI: "accept 2× more good payers than refusing everyone without history" is always met (2 × 0). What is the comparison policy? | a) a "classic scorecard": refuse when `EXT_SOURCE_1` and `EXT_SOURCE_3` are missing, otherwise apply our cut-off · b) keep the literal KPI | **a)**: a meaningful number for the report | Team | lot 3 |
+| D10 | Thin-file KPI: "accept 2× more good payers than refusing everyone without history" is always met (2 × 0). What is the comparison policy? | a) a "classic scorecard": refuse when `EXT_SOURCE_1` and `EXT_SOURCE_3` are missing, otherwise apply our cut-off · b) keep the literal KPI | **a)**: a meaningful number for the report. **Definition revised 2026-11-24:** thin file = Areej's merged `IS_THIN_FILE` (at least 2 of 3 `EXT_SOURCE` missing, or `AMT_REQ_CREDIT_BUREAU_YEAR` NaN or 0); the scorecard refuses every thin file | Team | lot 3 |
 | D11 | Git identity: commits must be credited to Achraf on GitHub (graded on `git log`) | check that `achraf.gharbi@mafrah.com` is linked to his GitHub account, or switch to the linked address | **check before the first commit** | Achraf | lot 1 |
 
 Technical decisions already taken (Achraf):
@@ -150,7 +156,7 @@ Changes to other owners' files go by PR:
 | `pyproject.toml` / `poetry.lock` | shared | ML dependencies (T1) |
 | `dvc.yaml` | Areej (data stages) | the train and evaluate stages |
 | `docker-compose.yml` | Iyed | MLflow service and `mlflow` bucket |
-| `params.yaml` | Areej | `data.val_size`, `cost.cost_review`, `threshold.max_review_share`, `threshold.min_recall`, `promotion.*`, `drift.*`, fix of the label spelling |
+| `params.yaml` | Areej | `data.val_size`, `cost.cost_review`, `threshold.max_review_share`, `threshold.min_recall`, `promotion.*`, `monitoring.*` (our drift-detection alert thresholds, lot 5; never under Areej's `drift:` key, which configures her simulator), fix of the label spelling |
 
 ---
 
@@ -317,7 +323,7 @@ Test: `main()` on synthetic data, in a `tmp_path`, with the MLflow URI `sqlite:/
 
 **Lot 2 progress (2026-10-25, branch `feature/mlflow-training`):**
 - [x] Params PR for Areej (separate `(for Areej's review)` commits): `data.val_size`, `cost.cost_review`, `threshold.max_review_share`, `threshold.min_recall` with bounds and tests; `threshold.low/high` documented as an optional manual override (D9); `A_ETUDIER` spelling (D4).
-- [x] `data/features.py` for Areej (D2, D10): `add_derived_features`, pure, row-wise, NaN instead of ±inf, `DAYS_EMPLOYED` 365243 → NaN, thin file = `EXT_SOURCE_1` and `_3` missing; 100 % covered.
+- [x] `data/features.py` for Areej (D2, D10): `add_derived_features`, pure, row-wise, NaN instead of ±inf, `DAYS_EMPLOYED` 365243 → NaN, thin file = `EXT_SOURCE_1` and `_3` missing; 100 % covered. **Superseded 2026-11-24:** removed in favour of Areej's `data/featurize.py` (D2, D10).
 - [x] `/models/` git-ignored (root-anchored).
 - [x] 3. `tests/conftest.py`: deterministic 2 000-row synthetic frame (8.7 % positives, NaNs in `EXT_SOURCE_*`, learnable signal).
 - [x] 4. `models/split.py` (D1), 100 %.
@@ -465,7 +471,7 @@ Stop point: a short review before it is wired into Prefect.
 - `psi(ref, cur, bins=10)`, written by hand: quantile bins on the reference, deduplicated, with an epsilon for empty bins.
 - `ks_test`, `chi2_test`, `drift_share`.
 - `compute_drift_report(ref, cur, labels=None) -> dict` (contract 4).
-- The alert fires when `drift_share ≥ 0.30`, or PSI ≥ 0.20 on a key feature, or `auc_drop > 0.03`.
+- The alert fires when `drift_share ≥ 0.30`, or PSI ≥ 0.20 on a key feature, or `auc_drop > 0.03`. These thresholds go in `params.yaml` under a **new `monitoring:` key** (PR on `params.yaml` + `config.py` for Areej), never under `drift:`, which is Areej's simulator configuration.
 
 **3. Tests.**
 - `tests/test_psi.py`: PSI = 0 on identical data; a hand-computed known value; empty bins stay finite; constant and binary columns; NaN handling.

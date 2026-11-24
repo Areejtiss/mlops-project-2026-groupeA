@@ -33,7 +33,8 @@
 ## 3. Entrée
 
 - **Exactement les colonnes `params.features.all`** (D2 option b), dans cet ordre : les 31 numériques puis les 10 catégorielles de `params.yaml`.
-- Les 8 features dérivées (`ANNUITY_INCOME_RATIO`, `CREDIT_INCOME_RATIO`, `CREDIT_TERM`, `AGE_YEARS`, `EMPLOYED_YEARS`, `DAYS_EMPLOYED_ANOM`, `EXT_SOURCE_MISSING_COUNT`, `IS_THIN_FILE`) **ne sont pas calculées par l'artefact**. Elles sont produites par les fonctions partagées d'Areej, dans cet ordre : `crediscore.data.featurize.fix_days_employed(df)` puis `add_derived_features(df)`. Ces fonctions sont appelées par l'étape `featurize` **et** par l'API avant le modèle. Un test de parité (les deux chemins donnent des colonnes identiques) est **à écrire** quand l'API d'Iyed existera ; il n'existe pas encore.- Types (signature MLflow, construite explicitement par `crediscore.models.train.build_signature`, pas inférée) :
+- Les 8 features dérivées (`ANNUITY_INCOME_RATIO`, `CREDIT_INCOME_RATIO`, `CREDIT_TERM`, `AGE_YEARS`, `EMPLOYED_YEARS`, `DAYS_EMPLOYED_ANOM`, `EXT_SOURCE_MISSING_COUNT`, `IS_THIN_FILE`) **ne sont pas calculées par l'artefact**. Elles sont produites par les fonctions partagées d'Areej, dans cet ordre : `crediscore.data.featurize.fix_days_employed(df)` puis `add_derived_features(df)`. Ces fonctions sont appelées par l'étape `featurize` **et** par l'API avant le modèle. Un test de parité (les deux chemins donnent des colonnes identiques) est **à écrire** quand l'API d'Iyed existera ; il n'existe pas encore.
+- Thin file (D10, définition d'Areej adoptée le 24/11/2026) : `IS_THIN_FILE = 1` si au moins 2 des 3 `EXT_SOURCE` manquent, ou si `AMT_REQ_CREDIT_BUREAU_YEAR` est manquant ou nul.- Types (signature MLflow, construite explicitement par `crediscore.models.train.build_signature`, pas inférée) :
 
 | Colonnes | Type | Manquant autorisé |
 |---|---|---|
