@@ -1,42 +1,49 @@
 """Challenger -> champion promotion gate (T7, D5, L4-1).
 
 `models:/crediscore@challenger` and `models:/crediscore@champion` are scored
-on THE SAME held-out batch (`--data`), each with its own thresholds.json
-(never on stored historical metrics). The challenger becomes champion iff all
-of these hold (bounds inclusive):
+on THE SAME fresh labelled batch (`--data`, required: a production or
+simulated batch, never the test split except for a manual demo where it is
+named explicitly), each with its own thresholds.json (authoritative; its
+version tags must match it). The challenger becomes champion iff all of these
+hold (bounds inclusive):
 - auc: challenger ROC-AUC >= champion ROC-AUC;
 - cost: challenger cost per file <= champion's (D3 costs, own thresholds);
 - gender_raw_gap, gender_eo_gap: gender acceptance gaps (raw and equal
   opportunity, XNA excluded) <= `promotion.max_gender_gap_pts`;
 - age_eo_gap: age equal-opportunity gap <= the baseline's (the age anchor,
   read from `--metrics`, written by `evaluate`) + `promotion.age_gap_margin_pts`.
-No champion yet: only the three fairness gates apply. A missing age anchor
-fails closed. The SYNOPSIS targets (AUC 0.75, PR-AUC 0.25, cost -15 %) are
-reported KPIs, not gates.
+No champion yet: only the three fairness gates apply. The SYNOPSIS targets
+(AUC 0.75, PR-AUC 0.25, cost -15 %) are reported KPIs, not gates.
 
-On promotion: alias `champion` moves to the challenger's version, alias
-`challenger` is removed, and the version is tagged `promoted_at`,
-`promotion_previous_champion`, `promotion_data_md5` and each check's value
-and limit (`promotion_<check>`, `promotion_<check>_limit`). Otherwise nothing
-changes. `--dry-run` computes and writes the decision but changes nothing.
-The decision goes to stdout and to `--output` (JSON, `failed` lists the
-conditions that failed: a check name, `no_challenger` or
-`age_anchor_missing`).
+Fail closed (not promoted, nothing changed), with the code in `failed`:
+`no_challenger`, `already_champion` (challenger == champion version),
+`age_anchor_missing`, `batch_too_small` (< `promotion.min_rows`),
+`gender_groups_missing` (fewer than 2 gender groups with
+`promotion.min_group_rows` rows), `thresholds_mismatch` (version tags !=
+thresholds.json), or `["error", "<message>"]` on any exception.
+
+On promotion, in this order: the version is tagged `promoted_at`,
+`promotion_previous_champion`, `promotion_data_md5` and each check's value and
+limit (`promotion_<check>`, `promotion_<check>_limit`); alias `challenger` is
+removed; alias `champion` moves to the challenger's version, last. `--dry-run`
+computes and writes the decision but changes nothing. The decision goes to
+stdout and to `--output` (JSON, rewritten at every run).
 
 Exit code: 0 if the decision is "promote" (also with --dry-run), else 1.
 
 Usage:
     poetry run python -m crediscore.models.promote
+        --data data/simulated/economic_crisis.parquet       (one line)
     poetry run python -m crediscore.models.promote --dry-run
-        --data data/simulated/batch.parquet --output reports/promotion.json
+        --data <batch.parquet> --output reports/promotion.json
 
-Defaults: --data data/processed/test.parquet, --metrics reports/metrics.json,
---output reports/promotion.json, --params params.yaml. The MLflow server
-comes from MLFLOW_TRACKING_URI.
+Defaults: --metrics reports/metrics.json, --output reports/promotion.json,
+--params params.yaml. The MLflow server comes from MLFLOW_TRACKING_URI.
 """
 
 import argparse
 import json
+import math
 import operator
 import sys
 from collections.abc import Callable
@@ -51,7 +58,12 @@ import pandas as pd
 from mlflow.tracking import MlflowClient
 
 from crediscore.config import Params, PromotionConfig, load_params
-from crediscore.fairness.audit import audit, d5_checks
+from crediscore.fairness.audit import (
+    GENDER_COL,
+    GENDER_EXCLUDED,
+    audit,
+    d5_checks,
+)
 from crediscore.models.evaluate import load_model
 from crediscore.models.registry import MODEL_NAME
 from crediscore.models.threshold import decide as decide_zones
@@ -134,14 +146,45 @@ def read_age_anchor(path: Path) -> float | None:
     """The baseline's age equal-opportunity gap from evaluate's metrics.json.
 
     Returns:
-        The anchor in points, or None if the file or the number is missing.
+        The anchor in points, or None if the file or the number is missing,
+        not a number (a bool is not), or not finite.
     """
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         anchor = payload["baseline"]["fairness"]["age"]["eo_gap_pts"]
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    return float(anchor) if isinstance(anchor, int | float) else None
+    if isinstance(anchor, bool) or not isinstance(anchor, int | float):
+        return None
+    return float(anchor) if math.isfinite(anchor) else None
+
+
+def batch_check(df: pd.DataFrame, promotion: PromotionConfig) -> str | None:
+    """Fail-closed guards on the batch before any score (gaps too noisy).
+
+    Returns:
+        `batch_too_small` below `min_rows` rows, `gender_groups_missing` if
+        fewer than 2 gender groups (XNA excluded) have `min_group_rows` rows,
+        else None (bounds inclusive).
+    """
+    if len(df) < promotion.min_rows:
+        return "batch_too_small"
+    sizes = df[GENDER_COL][df[GENDER_COL] != GENDER_EXCLUDED].value_counts()
+    if int((sizes >= promotion.min_group_rows).sum()) < 2:
+        return "gender_groups_missing"
+    return None
+
+
+def thresholds_match(client: MlflowClient, version: str, th: dict[str, Any]) -> bool:
+    """True if the version tags carry exactly the thresholds.json values (D9)."""
+    tags = client.get_model_version(MODEL_NAME, version).tags
+    try:
+        return bool(
+            float(tags["threshold_low"]) == th["low"]
+            and float(tags["threshold_high"]) == th["high"]
+        )
+    except (KeyError, ValueError):
+        return False
 
 
 def apply_promotion(
@@ -151,33 +194,29 @@ def apply_promotion(
     checks: dict[str, dict[str, Any]],
     tags: dict[str, str],
 ) -> None:
-    """Move `champion` to `version`, drop `challenger`, tag the version."""
-    client.set_registered_model_alias(MODEL_NAME, "champion", version)
-    client.delete_registered_model_alias(MODEL_NAME, "challenger")
+    """Tag the version, drop `challenger`, then move `champion` (last).
+
+    The champion alias moves last, so a failure part-way leaves the old
+    champion serving; a re-run then sees the true previous champion.
+    """
     for name, c in checks.items():
         tags[f"promotion_{name}"] = repr(c["value"])
         tags[f"promotion_{name}_limit"] = repr(c["limit"])
     tags["promotion_previous_champion"] = previous or "none"
     for key, value in tags.items():
         client.set_model_version_tag(MODEL_NAME, version, key, value)
+    client.delete_registered_model_alias(MODEL_NAME, "challenger")
+    client.set_registered_model_alias(MODEL_NAME, "champion", version)
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Command-line entry point (see the module docstring).
+def _fail(decision: dict[str, Any], code: str) -> None:
+    decision.update(promote=False, failed=[code], checks={})
 
-    Returns:
-        0 if the decision is "promote", else 1.
-    """
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--params", type=Path, default=Path("params.yaml"))
-    parser.add_argument(
-        "--data", type=Path, default=Path("data/processed/test.parquet")
-    )
-    parser.add_argument("--metrics", type=Path, default=Path("reports/metrics.json"))
-    parser.add_argument("--output", type=Path, default=Path("reports/promotion.json"))
-    parser.add_argument("--dry-run", action="store_true", help="change nothing")
-    args = parser.parse_args(argv)
+
+def _run(args: argparse.Namespace, decision: dict[str, Any]) -> str:
+    """Fill `decision` (and promote unless dry run); return the log message."""
     params = load_params(args.params)
+    decision["data_md5"] = file_md5(args.data)
     client = MlflowClient()
     try:
         aliases = {
@@ -188,65 +227,107 @@ def main(argv: list[str] | None = None) -> int:
         aliases = {}
     ch_version, champ_version = aliases.get("challenger"), aliases.get("champion")
     anchor = read_age_anchor(args.metrics)
+    decision.update(
+        challenger_version=ch_version,
+        champion_version=champ_version,
+        age_anchor_pts=anchor,
+    )
+    if ch_version is None:
+        _fail(decision, "no_challenger")
+        return f"no @challenger version of {MODEL_NAME}: nothing to promote"
+    if ch_version == champ_version:
+        _fail(decision, "already_champion")
+        return f"@challenger v{ch_version} is already @champion: nothing to do"
+    if anchor is None:
+        _fail(decision, "age_anchor_missing")
+        return (
+            f"no age anchor (baseline age equal-opportunity gap) in {args.metrics}: "
+            "run evaluate first; not promoted (fail closed)"
+        )
+    df = pd.read_parquet(args.data)
+    decision["n_rows"] = len(df)
+    problem = batch_check(df, params.promotion)
+    if problem is not None:
+        _fail(decision, problem)
+        return f"{args.data} ({len(df)} rows): {problem}; not promoted (fail closed)"
+    X, _ = prepare_xy(df, params)
+    for side, version in [("challenger", ch_version), ("champion", champ_version)]:
+        if version is None:
+            continue
+        model, th = load_model(f"models:/{MODEL_NAME}/{version}")
+        if not thresholds_match(client, version, th):
+            _fail(decision, "thresholds_mismatch")
+            return (
+                f"v{version}: threshold tags differ from its thresholds.json; "
+                "not promoted (fail closed)"
+            )
+        decision["scores"][side] = score(df, model.predict_proba(X)[:, 1], th, params)
+    decision.update(
+        decide(
+            decision["scores"]["challenger"],
+            decision["scores"]["champion"],
+            age_anchor_pts=anchor,
+            promotion=params.promotion,
+        )
+    )
+    if decision["promote"] and not args.dry_run:
+        apply_promotion(
+            client,
+            ch_version,
+            champ_version,
+            decision["checks"],
+            {
+                "promoted_at": decision["timestamp"],
+                "promotion_data_md5": decision["data_md5"],
+            },
+        )
+        decision["applied"] = True
+    verdict = "promoted" if decision["applied"] else "would promote"
+    if not decision["promote"]:
+        verdict = f"not promoted, failed: {', '.join(decision['failed'])}"
+    return (
+        f"challenger v{ch_version} vs champion v{champ_version or '-'} "
+        f"on {args.data}: {verdict}"
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Command-line entry point (see the module docstring).
+
+    Returns:
+        0 if the decision is "promote", else 1 (also on any error).
+    """
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--params", type=Path, default=Path("params.yaml"))
+    parser.add_argument(
+        "--data", type=Path, required=True, help="fresh labelled batch, not test"
+    )
+    parser.add_argument("--metrics", type=Path, default=Path("reports/metrics.json"))
+    parser.add_argument("--output", type=Path, default=Path("reports/promotion.json"))
+    parser.add_argument("--dry-run", action="store_true", help="change nothing")
+    args = parser.parse_args(argv)
     decision: dict[str, Any] = {
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         "dry_run": args.dry_run,
         "data": str(args.data),
-        "data_md5": file_md5(args.data),
+        "data_md5": None,
+        "n_rows": None,
         "model": MODEL_NAME,
-        "challenger_version": ch_version,
-        "champion_version": champ_version,
-        "age_anchor_pts": anchor,
+        "challenger_version": None,
+        "champion_version": None,
+        "age_anchor_pts": None,
         "applied": False,
         "scores": {"challenger": None, "champion": None},
+        "promote": False,
+        "failed": [],
+        "checks": {},
     }
-    if ch_version is None:
-        message = f"no @challenger version of {MODEL_NAME}: nothing to promote"
-        decision.update(promote=False, failed=["no_challenger"], checks={})
-    elif anchor is None:
-        message = (
-            f"no age anchor (baseline age equal-opportunity gap) in {args.metrics}: "
-            "run evaluate first; not promoted (fail closed)"
-        )
-        decision.update(promote=False, failed=["age_anchor_missing"], checks={})
-    else:
-        df = pd.read_parquet(args.data)
-        X, _ = prepare_xy(df, params)
-        for side, version in [("challenger", ch_version), ("champion", champ_version)]:
-            if version is not None:
-                model, th = load_model(f"models:/{MODEL_NAME}/{version}")
-                decision["scores"][side] = score(
-                    df, model.predict_proba(X)[:, 1], th, params
-                )
-        decision["n_rows"] = len(df)
-        decision.update(
-            decide(
-                decision["scores"]["challenger"],
-                decision["scores"]["champion"],
-                age_anchor_pts=anchor,
-                promotion=params.promotion,
-            )
-        )
-        if decision["promote"] and not args.dry_run:
-            apply_promotion(
-                client,
-                ch_version,
-                champ_version,
-                decision["checks"],
-                {
-                    "promoted_at": decision["timestamp"],
-                    "promotion_data_md5": decision["data_md5"],
-                },
-            )
-            decision["applied"] = True
-        verdict = "promoted" if decision["applied"] else "would promote"
-        if not decision["promote"]:
-            verdict = f"not promoted, failed: {', '.join(decision['failed'])}"
-        message = (
-            f"challenger v{ch_version} vs champion v{champ_version or '-'} "
-            f"on {args.data}: {verdict}"
-        )
-    decision.setdefault("n_rows", None)
+    try:
+        message = _run(args, decision)
+    except Exception as err:  # fail closed: a stale decision must never survive
+        detail = f"{type(err).__name__}: {err}"
+        decision.update(promote=False, failed=["error", detail])
+        message = f"error, not promoted: {detail}"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(decision, indent=2) + "\n", encoding="utf-8")
     print(f"promotion: {message} ({args.output})")
