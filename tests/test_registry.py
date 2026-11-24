@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import mlflow
@@ -17,6 +18,7 @@ from crediscore.models.registry import MODEL_NAME, VERSION_TAGS, register, selec
 from conftest import make_synthetic_frame
 
 PARAMS_FILE = Path(__file__).resolve().parents[1] / "params.yaml"
+CONFIG = registry.run_config(load_params(PARAMS_FILE))
 
 
 def cand(run_id: str, auc: float, cost: float, **over: object) -> dict:
@@ -29,6 +31,7 @@ def cand(run_id: str, auc: float, cost: float, **over: object) -> dict:
         "min_recall": 0.65,
         "max_review_share": 0.15,
         "experiment": None,
+        "config": CONFIG,
     }
     return {**c, **over}
 
@@ -38,17 +41,17 @@ def cand(run_id: str, auc: float, cost: float, **over: object) -> dict:
 
 def test_lowest_cost_among_runs_reaching_the_auc_floor() -> None:
     runs = [cand("a", 0.74, 0.20), cand("b", 0.76, 0.32), cand("c", 0.75, 0.31)]
-    assert select_run(runs)["run_id"] == "c"  # a is cheaper but below 0.75
+    assert select_run(runs, CONFIG)["run_id"] == "c"  # a is cheaper but below 0.75
 
 
 def test_every_run_is_a_candidate_when_none_reaches_the_floor() -> None:
     runs = [cand("a", 0.70, 0.33), cand("b", 0.74, 0.34)]
-    assert select_run(runs)["run_id"] == "a"
+    assert select_run(runs, CONFIG)["run_id"] == "a"
 
 
 def test_cost_ties_are_broken_by_auc() -> None:
     runs = [cand("a", 0.76, 0.30), cand("b", 0.77, 0.30), cand("c", 0.75, 0.30)]
-    assert select_run(runs)["run_id"] == "b"
+    assert select_run(runs, CONFIG)["run_id"] == "b"
 
 
 def test_runs_breaking_the_d3_d8_constraints_are_excluded() -> None:
@@ -57,17 +60,55 @@ def test_runs_breaking_the_d3_d8_constraints_are_excluded() -> None:
         cand("review_cap", 0.80, 0.10, review_share=0.151),
         cand("ok", 0.76, 0.30, recall=0.65, review_share=0.15),  # inclusive
     ]
-    assert select_run(runs)["run_id"] == "ok"
+    assert select_run(runs, CONFIG)["run_id"] == "ok"
 
 
 def test_no_feasible_run_raises() -> None:
     with pytest.raises(ValueError, match="no candidate run"):
-        select_run([cand("a", 0.8, 0.1, recall=0.1)])
+        select_run([cand("a", 0.8, 0.1, recall=0.1)], CONFIG)
+
+
+def test_runs_trained_with_other_params_are_excluded() -> None:
+    other = {**CONFIG, "cost_review": 0.5}
+    runs = [cand("old_costs", 0.80, 0.10, config=other), cand("ok", 0.76, 0.30)]
+    assert select_run(runs, CONFIG)["run_id"] == "ok"
+    with pytest.raises(ValueError, match="no candidate run"):
+        select_run([cand("old_costs", 0.80, 0.10, config=other)], CONFIG)
+
+
+def test_run_config_is_the_logged_cost_constraints_and_val_size() -> None:
+    params = load_params(PARAMS_FILE)
+    assert CONFIG == {
+        "cost_fn": params.cost.cost_fn,
+        "cost_fp": params.cost.cost_fp,
+        "cost_review": params.cost.cost_review,
+        "min_recall": params.threshold.min_recall,
+        "max_review_share": params.threshold.max_review_share,
+        "val_size": params.data.val_size,
+    }
+
+
+def test_search_is_filtered_on_the_server() -> None:
+    seen: list[str] = []
+
+    class FakeClient:
+        def get_experiment_by_name(self, name: str) -> object:
+            return type("E", (), {"experiment_id": "1"})()
+
+        def search_runs(self, ids: list[str], filter_string: str) -> list:
+            seen.append(filter_string)
+            return []
+
+    assert registry.training_runs(FakeClient(), "abc") == []  # type: ignore[arg-type]
+    (f,) = seen
+    assert "tags.train_data_hash = 'abc'" in f
+    assert "tags.`mlflow.parentRunId` IS NULL" in f
+    assert "attributes.status = 'FINISHED'" in f
 
 
 def test_custom_floor() -> None:
     runs = [cand("a", 0.70, 0.20), cand("b", 0.80, 0.30)]
-    assert select_run(runs, min_auc=0.65)["run_id"] == "a"
+    assert select_run(runs, CONFIG, min_auc=0.65)["run_id"] == "a"
 
 
 # --- registration on sqlite ------------------------------------------------------
@@ -85,6 +126,13 @@ def tracked(tmp_path_factory: pytest.TempPathFactory) -> Path:
     dvc = base / "data" / "raw" / "application_train.csv.dvc"
     dvc.parent.mkdir(parents=True)
     dvc.write_text("outs:\n- md5: rawmd5\n  path: application_train.csv\n", "utf-8")
+    # A throwaway repository, so that the runs get a git_sha tag even from a
+    # git archive copy (no .git) of the project.
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q"], cwd=base, check=True)
+    subprocess.run(
+        [*git, "commit", "-q", "--allow-empty", "-m", "x"], cwd=base, check=True
+    )
     old_cwd, old_uri = Path.cwd(), os.environ.get("MLFLOW_TRACKING_URI")
     uri = f"sqlite:///{(base / 'mlflow.db').as_posix()}"
     os.chdir(base)
@@ -155,8 +203,8 @@ def test_version_tags_are_copied_exactly(store: Path) -> None:
     version, _ = register(client, run.info.run_id)
     tags = client.get_model_version(MODEL_NAME, version).tags
     for key in VERSION_TAGS:
-        if key != "git_sha":  # no git repository around the test store
-            assert tags[key] == run.data.tags[key], key
+        assert tags[key] == run.data.tags[key], key
+    assert len(tags["git_sha"]) == 40
     assert set(VERSION_TAGS) >= {
         "threshold_low",
         "threshold_high",
@@ -193,7 +241,7 @@ def test_a_run_without_threshold_tags_is_refused(store: Path) -> None:
 def test_main_select_registers_the_selected_run(store: Path) -> None:
     runs = runs_by_model()
     client = mlflow.MlflowClient()
-    expected = select_run([registry.candidate(r) for r in runs.values()])
+    expected = select_run([registry.candidate(r) for r in runs.values()], CONFIG)
     registry.main(
         ["--select", "--train", str(store / "train.parquet"), "--allow-experiment"]
     )
@@ -215,7 +263,7 @@ def test_main_refuses_an_experiment_winner_without_the_flag(
 ) -> None:
     no_age = registry.candidate(runs_by_model()["lightgbm"])
     assert no_age["experiment"] == "no_age"
-    monkeypatch.setattr(registry, "select_run", lambda c, **k: no_age)
+    monkeypatch.setattr(registry, "select_run", lambda *a, **k: no_age)
     with pytest.raises(SystemExit, match="experiment=no_age"):
         registry.main(["--select", "--train", str(store / "train.parquet")])
     assert not mlflow.MlflowClient().search_registered_models()
@@ -294,3 +342,7 @@ def test_a_run_with_excluded_features_is_an_experiment_even_untagged(
         )
     c = registry.candidate(mlflow.MlflowClient().get_run(run.info.run_id))
     assert c["experiment"] == "excluded:AGE_YEARS"
+
+
+def test_candidate_carries_the_logged_config(store: Path) -> None:
+    assert registry.candidate(runs_by_model()["logreg"])["config"] == CONFIG
