@@ -260,12 +260,12 @@ def test_model_params_file_exclude_and_experiment_tag(
 
 
 def test_exclude_rejects_a_column_that_is_not_a_numeric_feature(
-    train_file: Path,
+    train_file: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    argv = ["--params", str(PARAMS_FILE), "--train", str(train_file)]
     with pytest.raises(SystemExit):
-        main(
-            ["--params", str(PARAMS_FILE), "--train", str(train_file), "--exclude", "X"]
-        )
+        main([*argv, "--exclude", "X", "--experiment", "x"])
+    assert "not numeric features: ['X']" in capsys.readouterr().err
 
 
 def test_xgboost_gets_scale_pos_weight_from_the_fit_part(
