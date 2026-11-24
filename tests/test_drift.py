@@ -655,3 +655,43 @@ def test_report_rejects_a_non_finite_auc_drop(
 ) -> None:
     with pytest.raises(ValueError, match="finite"):
         compute_drift_report(synthetic_frame, synthetic_frame, params, auc_drop=bad)
+
+
+def with_monitoring(params: Params, **changes: int) -> Params:
+    """A copy of params with some `monitoring` values changed."""
+    monitoring = params.monitoring.model_copy(update=changes)
+    return params.model_copy(update={"monitoring": monitoring})
+
+
+def test_small_reference_also_blocks_the_data_drift_alert(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    # n_rows is the SMALLER batch: 300 reference rows < min_rows, even though
+    # the current batch has 2 000.
+    reference = synthetic_frame.iloc[:300]
+    current = synthetic_frame.copy()
+    current["AMT_INCOME_TOTAL"] += 1.0
+    report = compute_drift_report(reference, current, params)
+    assert report["psi"]["AMT_INCOME_TOTAL"] >= params.monitoring.psi_alert
+    assert report["alert"] is False
+
+
+def test_small_batch_guard_follows_the_min_rows_param(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    current = synthetic_frame.iloc[:300].copy()
+    current["AMT_INCOME_TOTAL"] += 1.0
+    assert compute_drift_report(synthetic_frame, current, params)["alert"] is False
+    lenient = with_monitoring(params, min_rows=300)
+    assert compute_drift_report(synthetic_frame, current, lenient)["alert"] is True
+
+
+def test_auc_drop_follows_the_min_labelled_param(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    current = synthetic_frame.iloc[:800]
+    assert current[params.target].sum() >= params.monitoring.min_positives
+    model = ExtSourceModel()
+    assert auc_drop(model, synthetic_frame, current, params) is None
+    lenient = with_monitoring(params, min_labelled=800)
+    assert auc_drop(model, synthetic_frame, current, lenient) is not None
