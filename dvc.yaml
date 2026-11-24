@@ -102,6 +102,7 @@ stages:
     cmd: python -m crediscore.models.evaluate --model models
     deps:
       - src/crediscore/models/evaluate.py
+      - src/crediscore/fairness/audit.py
       - src/crediscore/models/train.py
       - src/crediscore/models/pipeline.py
       - src/crediscore/models/split.py
@@ -121,6 +122,7 @@ stages:
       - cost
       - threshold.min_recall
       - threshold.max_review_share
+      - promotion
     metrics:
       # Small JSON, versioned in Git (not in the DVC cache).
       - reports/metrics.json:
