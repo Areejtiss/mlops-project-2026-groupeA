@@ -2,13 +2,15 @@
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 import pytest
 from sklearn.metrics import roc_auc_score
 
-from crediscore.config import MonitoringConfig, Params
+from crediscore.config import MonitoringConfig, Params, load_params
 from crediscore.models.train import fit_model, prepare_xy
 from crediscore.monitoring.drift import (
     REPORT_KEYS,
@@ -18,7 +20,9 @@ from crediscore.monitoring.drift import (
     drift_share,
     is_alert,
     ks_test,
+    main,
 )
+from conftest import PARAMS_FILE, make_synthetic_frame
 
 RNG_SEED = 42
 
@@ -314,3 +318,88 @@ def test_concept_drift_scenario_c_raises_the_alert(
     report = compute_drift_report(ref, cur, params, auc_drop=drop)
     assert report["drift_share"] == 0.0
     assert report["alert"] is True
+
+
+# --- Evidently HTML and CLI -----------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def cli_run(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """One CLI run on a shifted synthetic batch, with a saved model."""
+    params = load_params(PARAMS_FILE)
+    frame = make_synthetic_frame(params)
+    tmp = tmp_path_factory.mktemp("drift_cli")
+    ref, cur = frame.iloc[:1000], frame.iloc[1000:].copy()
+    cur["AMT_INCOME_TOTAL"] += 1.0
+    ref.to_parquet(tmp / "ref.parquet")
+    cur.to_parquet(tmp / "cur.parquet")
+    model_dir = tmp / "model"
+    model_dir.mkdir()
+    joblib.dump(
+        fit_model(*prepare_xy(ref, params), "logreg", params),
+        model_dir / "model.joblib",
+    )
+    (model_dir / "thresholds.json").write_text('{"low": 0.1, "high": 0.5}')
+    out = tmp / "out"
+    main(
+        [
+            "--reference",
+            str(tmp / "ref.parquet"),
+            "--current",
+            str(tmp / "cur.parquet"),
+            "--model",
+            str(model_dir),
+            "--out-dir",
+            str(out),
+            "--params",
+            str(PARAMS_FILE),
+        ]
+    )
+    return tmp, out
+
+
+def test_cli_writes_latest_json_and_a_stamped_pair(cli_run: tuple[Path, Path]) -> None:
+    _, out = cli_run
+    latest = json.loads((out / "latest.json").read_text(encoding="utf-8"))
+    assert list(latest) == list(REPORT_KEYS)
+    assert latest["alert"] is True  # alert lives in the JSON, the run still ends
+    assert isinstance(latest["auc_drop"], float)
+    stamp = datetime.fromisoformat(latest["timestamp"]).strftime("%Y-%m-%d_%H%M%S")
+    assert json.loads((out / f"{stamp}.json").read_text(encoding="utf-8")) == latest
+    assert sorted(p.name for p in out.iterdir()) == sorted(
+        ["latest.json", f"{stamp}.json", f"{stamp}.html"]
+    )
+
+
+def test_cli_html_is_an_evidently_report_naming_the_features(
+    cli_run: tuple[Path, Path],
+) -> None:
+    _, out = cli_run
+    (html,) = out.glob("*.html")
+    text = html.read_text(encoding="utf-8")
+    assert len(text) > 10_000
+    assert "evidently" in text.lower()
+    assert "AMT_INCOME_TOTAL" in text and "NAME_INCOME_TYPE" in text
+    assert "CODE_GENDER" not in text  # only the model features are compared
+
+
+def test_cli_without_model_has_null_auc_drop(
+    cli_run: tuple[Path, Path], tmp_path: Path
+) -> None:
+    tmp, _ = cli_run
+    main(
+        [
+            "--reference",
+            str(tmp / "ref.parquet"),
+            "--current",
+            str(tmp / "ref.parquet"),
+            "--out-dir",
+            str(tmp_path),
+            "--params",
+            str(PARAMS_FILE),
+        ]
+    )
+    latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    assert latest["auc_drop"] is None
+    assert latest["alert"] is False
+    assert len(list(tmp_path.glob("*.html"))) == 1
