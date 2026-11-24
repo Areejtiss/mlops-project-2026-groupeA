@@ -8,10 +8,15 @@
 
 - Modèle enregistré dans le MLflow Model Registry sous le nom **`crediscore`**.
 - Deux alias : **`champion`** (servi par l'API) et **`challenger`** (candidat à la promotion). Les stages `Staging`/`Production` sont dépréciés dans MLflow et ne sont pas utilisés.
-- **Promotion** (`models/promote.py`, T7, D5). Le challenger devient champion si **toutes** ces conditions sont vraies, sur le même jeu récent pour les deux modèles :
-  - AUC du challenger ≥ AUC du champion, et ≥ 0,75 ;
-  - **sexe** : écart de taux d'acceptation (`ACCEPTE` seulement) entre F et M, `XNA` exclu, ≤ 10 pts, **et** écart d'égalité des chances ≤ 10 pts ;
-  - **âge** (<30, 30-50, ≥50) : écart d'égalité des chances du challenger ≤ celui de la **baseline** LogReg + 2 pts : l'ancre est l'écart d'égalité des chances selon l'âge de la baseline LogReg, recalculé par `evaluate` sur le jeu d'évaluation qu'on lui donne ; l'écart du challenger doit rester ≤ cette valeur + 2 pts. « Fixe » veut dire liée à la baseline, jamais au champion : elle ne peut pas dériver. Valeur actuelle 38,7 pts, donc limite 40,7 pts (historique : 34,9 pts était la limite provisoire du lot 1, sur un autre split). La règle s'applique dès la première promotion. Pas de seuil absolu ; les deux écarts d'âge sont publiés à chaque évaluation.
+- **Promotion** (`crediscore.models.promote`, T7, D5, **règle relative révisée le 24/11/2026**, validée par l'humain). Le challenger (`models:/crediscore@challenger`) et le champion (`models:/crediscore@champion`) sont évalués sur **le même lot**, passé en entrée (`--data`, par défaut `data/processed/test.parquet`), chacun avec **ses propres seuils** (`thresholds.json` de sa version). Le challenger devient champion si **toutes** ces conditions sont vraies (bornes incluses) :
+  - `auc` : AUC du challenger ≥ AUC du champion ;
+  - `cost` : coût par dossier du challenger ≤ celui du champion (coûts D3, seuils de chaque version) ;
+  - `gender_raw_gap`, `gender_eo_gap` : **sexe**, écart de taux d'acceptation (`ACCEPTE` seulement) entre F et M, `XNA` exclu, ≤ 10 pts, **et** écart d'égalité des chances ≤ 10 pts (`params.promotion.max_gender_gap_pts`) ;
+  - `age_eo_gap` : **âge** (<30, 30-50, ≥50), écart d'égalité des chances du challenger ≤ celui de la **baseline** LogReg + 2 pts (`params.promotion.age_gap_margin_pts`). Référence fixe, lue dans `reports/metrics.json` écrit par `evaluate` (`baseline.fairness.age.eo_gap_pts`) : **38,7 pts** sur le split de test d'Areej, donc limite **40,7 pts** (34,9 pts était la valeur provisoire du lot 1). Si elle manque, la promotion est **refusée** (échec fermé, `age_anchor_missing`). Les deux écarts d'âge sont publiés à chaque évaluation.
+  - **Pourquoi relative :** le champion actuel a une AUC test de 0,7469 ; un seuil absolu « AUC ≥ 0,75 » sur un lot récent bloquerait toute promotion et la boucle de réentraînement n'aboutirait jamais. Les cibles 0,75 / 0,25 / −15 % restent des **KPI publiés**, pas des conditions.
+  - **Pas encore de champion :** seules les trois conditions d'équité s'appliquent.
+  - **Si promu :** l'alias `champion` passe à la version du challenger, l'alias `challenger` est supprimé, et la version reçoit les tags `promoted_at`, `promotion_previous_champion`, `promotion_data_md5` et, pour chaque condition, `promotion_<condition>` (valeur) et `promotion_<condition>_limit`. Sinon rien ne change.
+  - **Sortie :** code 0 si promu, 1 sinon (le flow Prefect d'Areej s'en sert) ; une ligne `promotion: ...` sur la sortie standard ; un JSON `reports/promotion.json` dont la clé `failed` liste les conditions en échec (un nom de condition, `no_challenger` ou `age_anchor_missing`). `--dry-run` calcule et écrit la décision sans rien changer (même code de sortie).
 - L'API charge `models:/crediscore@champion`. La « version du modèle » (`model_version`) est le numéro de version du Registry, en chaîne (ex. `"3"`).
 
 ## 2. Flavor et objet exact
@@ -104,6 +109,8 @@
 - Les contributions des colonnes one-hot sont **ré-additionnées par colonne d'origine** (`OCCUPATION_TYPE`, pas `cat__OCCUPATION_TYPE_Laborers`).
 - `value` : la valeur reçue en entrée pour cette colonne, avant imputation et mise à l'échelle ; `null` si elle manquait.
 - Signe : contribution > 0 = augmente le risque de défaut.
+- Valeur de base : recalculée à partir du modèle (marge du pipeline sur une ligne nulle moins la somme de ses contributions), car shap 0.51 donne pour XGBoost 3 une `expected_value` décalée d'une constante (environ 0,04 log-odds). L'additivité (base + somme = marge, ou probabilité pour RandomForest) est testée pour les quatre modèles.
+- LogReg : la référence de `LinearExplainer` est la moyenne d'entraînement des numériques mises à l'échelle (0) et « aucune modalité » pour le one-hot, ou la moyenne d'un échantillon `background` s'il est fourni.
 - Cible de latence : < 50 ms par ligne (mesurée en local, T9).
 
 ## 7. Tags et métadonnées du run
@@ -187,6 +194,68 @@ response = {"proba": round(float(proba[0]), 4), "decision": str(decision)}   # a
 - Depuis le lot 3 (version 1 enregistrée), `joblib.load` peut être remplacé par `mlflow.sklearn.load_model("models:/crediscore@champion")`, et les seuils seront lus dans les tags de la version (`threshold_low`, `threshold_high`, `shap_unit`). Accès au serveur MLflow :
   - **depuis un conteneur du réseau compose** (l'API) : `MLFLOW_TRACKING_URI=http://mlflow:5000`. Cela fonctionne parce que le serveur liste `mlflow:5000` dans `--allowed-hosts` (sans cela, MLflow 3.17 répond 403 « Invalid Host header ») ; les URL présignées vers `http://minio:9000` sont résolues dans le réseau. Vérifié : un conteneur du réseau charge les deux modèles, mêmes probabilités que `model.joblib` ;
   - **depuis la machine hôte** : `MLFLOW_TRACKING_URI=http://localhost:5000` **et** `MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false` (voir `.env.example`), sinon `load_model` reste bloqué sur `http://minio:9000`, que l'hôte ne résout pas.
+
+## 10. SHAP et décision pour `/predict` (passation à Iyed, lot 4)
+
+`crediscore.explain.shap_explainer.Explainer` produit `top_factors`. **On le construit une seule fois, au démarrage de l'API** (environ 0,3 s pour le champion), juste après le chargement du modèle ; on l'appelle ensuite à chaque requête.
+
+**Ordre exact de service :** champs bruts de la requête → `fix_days_employed` → `add_derived_features` → colonnes `params.features.all`, numériques en float64 → `model.predict_proba` → `decide` (sur la proba float64 non arrondie) → `explainer.explain` → arrondi de `proba` pour la réponse.
+
+- `explain(X)` rend, pour chaque ligne, une liste de **3** `Factor(feature, value, contribution)`, triés par |contribution| décroissante. `f._asdict()` donne directement l'objet `{feature, value, contribution}` du contrat 3.
+- `feature` : toujours une colonne d'origine de `params.features.all` (les one-hot sont ré-additionnés : `OCCUPATION_TYPE`, jamais `cat__OCCUPATION_TYPE_Laborers`). Une feature exclue du modèle n'apparaît jamais.
+- `value` : la valeur d'entrée de la colonne (float, int ou str), `None` si elle manquait.
+- `contribution` : unité lue dans le tag `shap_unit` de la version (section 6) : **log-odds** du modèle non calibré pour LogReg, LightGBM et XGBoost (champion v1 : `log_odds`) ; **probabilité** non calibrée pour RandomForest. Ne s'additionne pas à `proba`.
+- Sens pour l'interface : contribution **> 0 « augmente le risque »**, **< 0 « diminue le risque »**.
+- Latence mesurée en local sur 200 lignes réelles du test, une ligne par appel, champion v1 : `explain` p50 13,1 ms, **p95 14,9 ms** (cible < 50 ms) ; `predict_proba` + `explain` p95 33,2 ms.
+
+Extrait exécutable (vérifié le 24/11/2026 sur la ligne brute `SK_ID_CURR = 100295` du jeu de test, `OCCUPATION_TYPE` mis à `None` ; depuis l'hôte : `MLFLOW_TRACKING_URI=http://localhost:5000` et `MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false`, section 9) :
+
+```python
+import mlflow
+import mlflow.sklearn
+import pandas as pd
+
+from crediscore.config import load_params
+from crediscore.data.featurize import add_derived_features, fix_days_employed
+from crediscore.explain.shap_explainer import Explainer
+from crediscore.models.threshold import decide
+
+# Une fois, au démarrage
+params = load_params()
+client = mlflow.MlflowClient()
+version = client.get_model_version_by_alias("crediscore", "champion")
+model = mlflow.sklearn.load_model("models:/crediscore@champion")
+low = float(version.tags["threshold_low"])          # pleine précision, D9
+high = float(version.tags["threshold_high"])
+unit = version.tags["shap_unit"]                    # "log_odds" pour v1
+explainer = Explainer(model)                        # construit UNE fois
+
+# À chaque requête
+raw = pd.DataFrame([request_fields])                # tous les champs bruts, None si absent
+X = add_derived_features(fix_days_employed(raw))[params.features.all]
+X[params.features.numeric] = X[params.features.numeric].astype("float64")
+proba = model.predict_proba(X)[:, 1]                # float64 non arrondie
+decision = str(decide(proba, low, high)[0])
+factors = explainer.explain(X)[0]                   # 3 Factor, par |contribution|
+response = {
+    "proba": round(float(proba[0]), 4),             # arrondi APRÈS la décision
+    "decision": decision,
+    "top_factors": [f._asdict() for f in factors],
+    "model_version": version.version,
+}
+```
+
+Résultat sur cette ligne (défaut réel, `TARGET = 1`) :
+
+```
+{'proba': 0.0978, 'decision': 'A_ETUDIER', 'top_factors': [
+  {'feature': 'EXT_SOURCE_2', 'value': 0.3023938171668298, 'contribution': 0.3960677271526772},
+  {'feature': 'EXT_SOURCE_1', 'value': 0.2620051155519113, 'contribution': 0.21113877101579187},
+  {'feature': 'REGION_POPULATION_RELATIVE', 'value': 0.072508, 'contribution': -0.16480913253840848}],
+ 'model_version': '1'}
+```
+
+Lecture : un `EXT_SOURCE_2` bas (0,30) augmente le risque (+0,40 log-odds) ; une région plus peuplée le diminue (−0,16). Le graphique de synthèse SHAP du champion (barres, moyenne des |contributions| sur 2 000 lignes du train) est `reports/figures/shap_summary.png`, aussi enregistré dans MLflow (run `a146f2b6842d42adac5da1979fa5d0cd`, tag `kind=shap_summary`, `model_run_id` = run du champion).
 
 ---
 
