@@ -357,7 +357,10 @@ def main(argv: list[str] | None = None) -> None:
         "kpi": kpis(model_rep, base_rep, params),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+    # LF on every OS: Git keeps it eol=lf and DVC hashes the bytes.
+    args.output.write_text(
+        json.dumps(metrics, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     if os.environ.get("MLFLOW_TRACKING_URI"):
         mlflow.set_experiment(EXPERIMENT)
         with mlflow.start_run(run_name="evaluate"):
