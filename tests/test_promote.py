@@ -499,7 +499,24 @@ def test_tags_first_challenger_alias_next_champion_alias_last(
     assert calls[first_alias:] == [
         "delete_registered_model_alias",
         "set_registered_model_alias",
+        "set_model_version_tag",  # promoted_at, once the champion has moved
     ]
+
+
+def test_an_aborted_champion_move_leaves_no_promoted_at(
+    store: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    register_pair("lightgbm", "lightgbm")
+
+    def boom(*a: Any, **k: Any) -> None:
+        raise RuntimeError("registry down")
+
+    monkeypatch.setattr(mlflow.MlflowClient, "set_registered_model_alias", boom)
+    code, decision = run_main(store, tmp_path)
+    assert (code, decision["failed"][0]) == (1, "error")
+    tags = mlflow.MlflowClient().get_model_version(MODEL_NAME, "2").tags
+    assert "promoted_at" not in tags
+    assert tags["promotion_previous_champion"] == "1"  # still written first
 
 
 @pytest.mark.parametrize(
