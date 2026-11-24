@@ -6,7 +6,7 @@
 
 - **Base read:** branch `dev` = `main` = `0de3860` (2026-10-11); `origin/feat/iyed-serving-cicd` = `91e5e1b` (2026-10-24, CI only, not merged).
 - **Owner:** Achraf Gharbi. **Written:** 2026-10-24.
-- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2), age rule anchored to the baseline the same day. Lot 2 implemented 2026-10-25 (see "Lot 2 progress"); `dvc.yaml` train stage deferred until Areej's pipeline exists. Lot 3 implemented 2026-11-24 (see "Lot 3 progress"): champion LightGBM v1 registered; test ROC-AUC, PR-AUC and the −15 % cost KPI missed, reported with their gaps.
+- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2), age rule anchored to the baseline the same day. Lot 2 implemented 2026-10-25 (see "Lot 2 progress"); `dvc.yaml` train stage deferred until Areej's pipeline exists. Lot 3 implemented 2026-11-24 (see "Lot 3 progress"): champion LightGBM v1 registered; test ROC-AUC, PR-AUC and the −15 % cost KPI missed, reported with their gaps.  Lot 4 implemented 2026-11-24 (see "Lot 4 progress"), with the promotion gate made relative (L4-1).
 - **Integration with `dev` (2026-11-24).** The three branches are rebased onto `origin/dev` = `3ed70dc` (Areej's PR #2, DVC pipeline, and PR #3, drift simulator). Consequences:
   - **D2:** Areej's `crediscore.data.featurize` (`fix_days_employed` then `add_derived_features`) is THE shared function; our `data/features.py` is removed. Its float64 cast of the raw inputs (one-row requests with `None`) is ported into her file, in a commit for her review.
   - **D10:** her merged thin-file definition is adopted (at least 2 of 3 `EXT_SOURCE` missing, or `AMT_REQ_CREDIT_BUREAU_YEAR` NaN or 0): 39.7 % of the real train split, against 11.9 % for our old stand-in.
@@ -72,6 +72,8 @@ Contract 2 must state:
 > - **Why (for the report):** age is a real risk driver in this data (the <30 band defaults about 2× the ≥50 band: 11.4 % vs 5.7 %) and a model feature. The baseline age gap is 34.5 pts raw / 32.9 pts equal opportunity, so an absolute 10-pt rule would block every promotion.
 > - Lot 3 adds one MLflow experiment, LightGBM without `AGE_YEARS`, to measure the AUC/cost vs age-gap trade-off.
 > - The teacher is told that the SYNOPSIS KPI "gap ≤ 10 pts" now applies to gender, and that age is "measured, explained, without degradation".
+>
+> **Promotion gate revised 2026-11-24 (L4-1, human-approved "adopt the recommended option"):** the gate is **relative**. The current champion scores test AUC 0.7469, so an absolute "AUC ≥ 0.75" on a fresh batch would block every promotion. Challenger and champion are scored on the same held-out batch, each with its own thresholds; promote iff AUC_ch ≥ AUC_champ, cost_ch ≤ cost_champ, both gender gaps ≤ 10 pts and age EO gap ≤ anchor + 2 pts (anchor = baseline age EO gap read from `reports/metrics.json`; missing = fail closed). No champion: fairness gates only. 0.75 / 0.25 / −15 % stay reported KPIs. Tolerances in `params.yaml` `promotion:` (`max_gender_gap_pts: 10`, `age_gap_margin_pts: 2`).
 >
 > **Closed 2026-10-24:** D7: no fixed dates; lots run back to back, as fast as quality allows. D11: the commit e-mail is Achraf's and is linked to his GitHub account.
 
@@ -539,9 +541,9 @@ Tests:
 - a single-group input;
 - an empty group.
 
-**3. `models/promote.py`.** The challenger becomes champion iff **all** of these hold on the same fresh held-out set (T7):
+**3. `models/promote.py`.** *(Revised 2026-11-24, L4-1: relative gate. `auc_ch ≥ 0.75` is dropped and `cost_ch ≤ cost_champ` is added; the age anchor is read from `reports/metrics.json` (38.7 pts, limit 40.7) and a missing anchor fails closed; exit 0 = promoted, 1 = not; `reports/promotion.json`; `--dry-run`. The text below is the original version.)* The challenger becomes champion iff **all** of these hold on the same fresh held-out set (T7):
 - `auc_ch ≥ auc_champ`;
-- `auc_ch ≥ 0.75`;
+- ~~`auc_ch ≥ 0.75`~~ (removed 2026-11-24);
 - **gender (D5)**: the acceptance-rate gap (`ACCEPTE` only) between F and M, `XNA` excluded, is ≤ 10 pts, **and** the equal-opportunity gap is ≤ 10 pts;
 - **age bands (D5)** (<30, 30–50, ≥50): non-regression anchored to the baseline, `eo_gap_age_ch ≤ eo_gap_age_baseline + 2` pts: the anchor is the LogReg baseline's age equal-opportunity gap, recomputed by `evaluate` on the evaluation set it is given; the challenger's gap must be ≤ that + 2 pts. "Fixed" means tied to the baseline, never to the champion, so it cannot creep. Current value 38.7 pts, so the limit is 40.7 pts (history: 34.9 was the provisional lot 1 limit, on another split). It applies to the first promotion too. No absolute age gate. Both age gaps are logged at every evaluation.
 
@@ -558,6 +560,27 @@ Stop point: a short review before it is wired into Prefect.
 **4. Handover to Iyed** (pairing session): SHAP for `/predict`.
 
 **Done when:** Iyed's API shows the 3 SHAP factors, and `promote.py` decides correctly on all test cases.
+
+**Lot 4 progress (2026-11-24, branch `feature/explainability-fairness`, on `a3e3db0`):**
+- [x] Params (L4-1, `(for Areej's review)`): `promotion.max_gender_gap_pts: 10`, `promotion.age_gap_margin_pts: 2`, `PromotionConfig` with bounds [0, 100], tests first.
+- [x] 2. `fairness/audit.py` (L4-2): acceptance (ACCEPTE only), equal-opportunity and recall (D8) rates per `CODE_GENDER` (XNA and missing excluded, counted) and per age band; max gaps in points; `d5_checks` (value, limit, pass; gaps compared at 1e-9 pts so `100 * (0.4 - 0.3)` is still 10). `evaluate` now takes its fairness numbers from the audit and its D5 tolerances from `params.promotion`; `reports/metrics.json` is **byte-identical**: `dvc repro -s evaluate` writes md5 `6382b250…`, the lot 3 lock value (the git blob differs only by CRLF). The `evaluate` stage now depends on `fairness/audit.py` and `promotion`; `dvc.lock` relocked (evaluate entry only).
+- [x] 1. `explain/shap_explainer.py` (L4-3): `Explainer(model)` built once; `explain(frame)` → 3 `Factor(feature, value, contribution)` per row on original columns; `contributions()` for additivity; units per contract 2 §6. Summary plot (bar of mean |contribution|, 2 000 train rows) in `reports/figures/shap_summary.png` and on the user's MLflow: run `a146f2b6842d42adac5da1979fa5d0cd`, tag `kind=shap_summary`, `model_run_id` = champion run `1c3f3b87…`. Top features: EXT_SOURCE_3, EXT_SOURCE_2, EXT_SOURCE_1, AMT_GOODS_PRICE, CREDIT_TERM.
+- [x] SHAP latency, local, champion v1, 200 real test rows one at a time: `explain` p50 13.1 ms, **p95 14.9 ms** (target < 50 ms); `predict_proba` + `explain` p95 33.2 ms; build 0.35 s. CI: `slow`-marked test, p95 < 500 ms.
+- [x] 3. `models/promote.py` (L4-1, relative gate, see the decisions block). Real checks: `--dry-run` on the user's server → `no_challenger`, registry identical before/after (REST). Throwaway server (sqlite, port 5321, stopped): v1 = champion artifact, v2 = no_age as challenger → **not promoted, failed `auc` (0.7463 < 0.7469) and `cost` (0.3267 > 0.3203)**; gender 8.3 / 6.8 pts and age EO 35.6 ≤ 40.7 pass; exit 1; aliases unchanged. The champion's batch scores equal `reports/metrics.json`. Then the champion run re-registered as v3 challenger → promoted (equal AUC and cost), `champion` → v3, `challenger` removed, `promoted_at` and `promotion_*` tags set, exit 0.
+- [x] 4. Hand-off to Iyed: contract 2 §10 (French); snippet run on raw test row `SK_ID_CURR 100295` with `OCCUPATION_TYPE = None`: `A_ETUDIER`, proba 0.0978, top factors EXT_SOURCE_2 (+0.40), EXT_SOURCE_1 (+0.21), REGION_POPULATION_RELATIVE (−0.16).
+- [ ] Adversarial review by a fresh agent (promotion is critical: two rounds) and walkthrough. Stop point before the Prefect wiring (Areej).
+- Checks: black, flake8, mypy strict green; **412 tests** (336 before); coverage 94 %; `audit` 100 %, `shap_explainer` 99 %, `promote` 99 %, `evaluate` 99 % (the misses are `__main__` lines).
+
+**Lot 4 mutation check (own):** 54 mutants on `audit.py`, `shap_explainer.py` and `promote.py`, on a `git archive` copy of `73cfdca` (`PYTHONPATH` checked to import the copy; unmutated suite first: exit 0). **54 run, 51 killed, 3 survived.** #1 (`len(rates) > 0` in `gap_pts`) is equivalent (one group gives 0 either way). #7 (recall gap computed from the raw rates) and #49 (promote's audit with `high` as `low`) were real gaps, now covered; replay with the new tests (unmutated selected suite first: exit 0): **2 run, 2 killed**. Logs: `scratchpad/lot4/mutation.log` and `scratchpad/lot4/mutation_replay.log` of the session.
+
+**Deviations and why:**
+- The gate is relative (L4-1, human-approved): AUC 0.75 and −15 % cost are KPIs, not gates; cost ≤ champion's is added.
+- SHAP base value is recomputed from the model on an all-zero row: shap 0.51 reports XGBoost 3's `expected_value` off by a constant (about 0.04 log-odds); found by the additivity test.
+- LogReg reference without background: training mean for scaled numerics, "no category" for one-hot (no training data needed at API startup); a `background` frame can be passed.
+- The summary plot is a matplotlib bar chart of mean |contribution| on original columns (a beeswarm cannot colour categorical columns); computed on train rows, not test.
+- `evaluate.registry_version` extracted (resolves a `models:/` URI) and reused by the explainer CLI.
+- The audit also publishes per-group recall; `evaluate` keeps only its previous keys, so `metrics.json` is unchanged.
+- A batch with a single gender group gives a gap of 0 and passes (same as `evaluate` before); flagged for review.
 
 ### Lot 5 — S6: drift computation (Jalon 4) · branch `feature/drift-detection` · ~10 h incl. review
 
