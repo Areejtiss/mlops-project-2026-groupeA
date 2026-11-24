@@ -70,3 +70,29 @@ def test_evaluate_reads_the_model_both_splits_and_writes_metrics(
         "data/processed/test.parquet",
     } <= set(ev["deps"])
     assert {"reports/metrics.json": {"cache": False}} in ev["metrics"]
+
+
+@pytest.mark.parametrize("name", ["train", "evaluate"])
+def test_stages_depend_on_every_module_they_import(
+    stages: dict[str, Any], name: str
+) -> None:
+    import sys
+
+    __import__(f"crediscore.models.{name}")
+    imported = {
+        Path(m.__file__).resolve().relative_to(ROOT).as_posix()
+        for key, m in sys.modules.items()
+        if key.startswith("crediscore.")
+        and getattr(m, "__file__", None)
+        and not m.__file__.endswith("__init__.py")
+    }
+    # Each stage runs in a fresh process: only its own import graph counts.
+    needed = {
+        "train": {"train", "pipeline", "split", "threshold", "cost", "tune"},
+        "evaluate": {"evaluate", "train", "pipeline", "split", "threshold"}
+        | {"cost", "tune"},
+    }[name]
+    expected = {f"src/crediscore/models/{m}.py" for m in needed}
+    expected.add("src/crediscore/config.py")
+    assert expected <= imported
+    assert expected <= set(stages[name]["deps"])
