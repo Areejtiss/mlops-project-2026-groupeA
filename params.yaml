@@ -121,7 +121,8 @@ monitoring:
   auc_drop_alert: 0.03      # alert when reference AUC - current AUC > 0.03
   psi_bins: 10              # quantile bins of the reference for the PSI
   min_rows: 500             # smaller batches: drift_share and PSI do not raise the alert
-  min_labelled: 1000        # fewer labelled current rows: auc_drop is null
+  min_labelled: 1000        # fewer labelled rows in a batch: auc_drop is null
+  min_positives: 50         # fewer defaults in a labelled batch: auc_drop is null
   key_features:             # features whose PSI alone can raise the alert
     - AMT_INCOME_TOTAL
     - AMT_CREDIT

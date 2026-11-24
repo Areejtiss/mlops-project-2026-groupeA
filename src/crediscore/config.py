@@ -136,6 +136,7 @@ class MonitoringConfig(StrictModel):
     psi_bins: int = Field(ge=2)
     min_rows: int = Field(ge=2)
     min_labelled: int = Field(ge=2)
+    min_positives: int = Field(ge=1)
     key_features: list[str] = Field(min_length=1)
 
 

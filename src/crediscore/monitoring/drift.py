@@ -45,8 +45,6 @@ EPSILON = 1e-4
 _NAN_BIN = -1
 # Half-width of the single bin of a constant column, relative to its value.
 _CONSTANT_PAD = 1e-6
-# auc_drop needs at least this many defaults in each labelled batch.
-MIN_POSITIVES = 50
 
 
 def _numeric_edges(reference: pd.Series, bins: int) -> npt.NDArray[np.float64]:
@@ -240,7 +238,7 @@ def auc_drop(
         The AUC drop (> 0 = the model got worse), or None when it is not
         computable: a batch without the label column, or whose labelled rows
         are fewer than `monitoring.min_labelled`, hold fewer than
-        MIN_POSITIVES defaults or a single class. Rows without a label are
+        `monitoring.min_positives` defaults or a single class. Rows without a label are
         left out.
     """
     aucs = []
@@ -252,7 +250,7 @@ def auc_drop(
         positives = int(y.sum())
         if (
             len(y) < params.monitoring.min_labelled
-            or positives < MIN_POSITIVES
+            or positives < params.monitoring.min_positives
             or positives == len(y)
         ):
             return None
