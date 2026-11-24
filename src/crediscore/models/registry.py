@@ -7,8 +7,9 @@ Selection (validation only, the test split is never read here):
   <= max_review_share);
 - keep those with validation ROC-AUC >= 0.75 if any reaches it;
 - the best is the lowest validation cost per file, ties broken by ROC-AUC.
-A winner tagged `experiment` (e.g. the D5 `no_age` run) is a measurement:
-it is flagged and only registered with `--allow-experiment`.
+A winner tagged `experiment` (e.g. the D5 `no_age` run), or trained with
+`excluded_features`, is a measurement: registration aborts unless
+`--allow-experiment` is passed.
 
 Registration: the run's logged model becomes a new version of `crediscore`.
 Alias `champion` if none exists yet, otherwise `challenger` (promotion is
@@ -72,7 +73,8 @@ def select_run(
 
 def candidate(run: Run) -> dict[str, Any]:
     """Selection fields of a `train` run (validation metrics and constraints)."""
-    m, p = run.data.metrics, run.data.params
+    m, p, t = run.data.metrics, run.data.params, run.data.tags
+    excluded = t.get("excluded_features")
     return {
         "run_id": run.info.run_id,
         "run_name": run.info.run_name,
@@ -82,7 +84,9 @@ def candidate(run: Run) -> dict[str, Any]:
         "review_share": m["val_review_share"],
         "min_recall": float(p["min_recall"]),
         "max_review_share": float(p["max_review_share"]),
-        "experiment": run.data.tags.get("experiment"),
+        # A run without some features is an experiment even if untagged.
+        "experiment": t.get("experiment")
+        or (f"excluded:{excluded}" if excluded else None),
     }
 
 

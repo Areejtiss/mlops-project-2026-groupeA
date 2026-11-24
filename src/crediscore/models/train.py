@@ -12,7 +12,8 @@ signature, contract 2) and tags. The model is NOT registered here
 each trial a nested MLflow run), then fits the best params as above.
 `--model-params FILE` fixes the hyperparameters instead (e.g. the
 `model_params.json` of a tuned run). `--exclude COL` keeps COL in the input
-but out of the model; `--experiment NAME` tags the run (D5: `no_age`).
+but out of the model and requires `--experiment NAME`, which tags the run
+(D5: `no_age`).
 
 The input parquet is featurized (Areej's output): it already has
 `params.features.all`, built by `crediscore.data.featurize` (`fix_days_employed`
@@ -458,6 +459,9 @@ def main(argv: list[str] | None = None) -> None:
     unknown = set(args.exclude) - set(params.features.numeric)
     if unknown:
         parser.error(f"--exclude: not numeric features: {sorted(unknown)}")
+    if args.exclude and not args.experiment:
+        # A run without some features is a measurement, never a candidate.
+        parser.error("--exclude needs --experiment (e.g. --experiment no_age)")
     if args.tune and args.model not in SEARCH_SPACES:
         parser.error(f"--tune: no search space for {args.model}")
     # MLflow prints an emoji: a redirected Windows console (cp1252) would crash.
