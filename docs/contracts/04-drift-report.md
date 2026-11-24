@@ -30,7 +30,7 @@ Les clés sont **exactement** celles-ci, dans cet ordre. JSON strict : pas de `N
 | `psi` | objet `{feature: nombre}` | ≥ 0, fini | PSI de chaque feature du modèle (numérique **et** catégorielle), 41 entrées |
 | `ks` | objet `{feature: nombre ou null}` | p-value dans [0, 1] | Test de Kolmogorov-Smirnov à deux échantillons, features **numériques** (31 entrées) |
 | `chi2` | objet `{feature: nombre}` | p-value dans [0, 1] | Test du χ² d'indépendance lot × catégorie, features **catégorielles** (10 entrées) |
-| `auc_drop` | nombre ou `null` | points d'AUC (0,03 = 3 points) | AUC du modèle sur la référence − AUC du même modèle sur le lot courant. Positif = le modèle se dégrade. Les lignes sans label sont ignorées. `null` = **non calculable** : pas de modèle, pas de colonne label, ou, dans l'un des deux lots, moins de `monitoring.min_labelled` (1 000) lignes labellisées, moins de 50 défauts, ou une seule classe |
+| `auc_drop` | nombre ou `null` | points d'AUC (0,03 = 3 points) | AUC du modèle sur la référence − AUC du même modèle sur le lot courant. Positif = le modèle se dégrade. Les lignes sans label sont ignorées. `null` = **non calculable** : pas de modèle, pas de colonne label, ou, dans l'un des deux lots, moins de `monitoring.min_labelled` (1 000) lignes labellisées, moins de `monitoring.min_positives` (50) défauts, ou une seule classe |
 | `alert` | booléen | | Règle de la section 5 |
 
 `ks` et `chi2` contiennent des **p-values**, pas des statistiques : plus la valeur est petite, plus la dérive est certaine. Les colonnes hors modèle (`SK_ID_CURR`, `TARGET`, `CODE_GENDER`) ne sont jamais comparées.
@@ -72,7 +72,7 @@ alert = (n >= 500 ET (drift_share >= 0.30 OU PSI >= 0.20 sur une feature clé))
 Seuils : `monitoring.min_rows`, `monitoring.drift_share_alert`, `monitoring.psi_alert`, `monitoring.auc_drop_alert`.
 
 - **Features clés** (`monitoring.key_features`) : `AMT_INCOME_TOTAL`, `AMT_CREDIT`, `ANNUITY_INCOME_RATIO`, `EXT_SOURCE_2`. Ce doivent être des features du modèle (vérifié par `config.py`).
-- Bornes testées : `drift_share` = 0,30 déclenche ; PSI = 0,20 sur une feature clé déclenche ; un PSI élevé sur une feature **non** clé ne déclenche pas seul ; `auc_drop` = 0,03 ne déclenche pas, 0,0301 oui ; une AUC qui s'améliore (`auc_drop` négatif) ne déclenche pas ; 499 lignes : ni `drift_share` ni le PSI ne déclenchent, 500 lignes oui ; la règle `auc_drop` s'applique quelle que soit la taille (elle a déjà son propre minimum, 1 000 lignes labellisées et 50 défauts).
+- Bornes testées : `drift_share` = 0,30 déclenche ; PSI = 0,20 sur une feature clé déclenche ; un PSI élevé sur une feature **non** clé ne déclenche pas seul ; `auc_drop` = 0,03 ne déclenche pas, 0,0301 oui ; une AUC qui s'améliore (`auc_drop` négatif) ne déclenche pas ; 499 lignes : ni `drift_share` ni le PSI ne déclenchent, 500 lignes oui ; la règle `auc_drop` s'applique quelle que soit la taille (elle a déjà son propre minimum, `min_labelled` = 1 000 lignes labellisées et `min_positives` = 50 défauts).
 - **Petits lots labellisés.** Sur le test réel, avec 1 000 lignes labellisées, l'écart type de `auc_drop` sans dérive est de 0,021 (1 fausse alerte sur 40 tirages) ; avec 2 000, 0,014 (aucune). En dessous de 1 000, `auc_drop` est `null`.
 - Le JSON ne dit pas quelle règle a déclenché (clés fixes) ; les consommateurs lisent les jauges (section 6) et **ne réimplémentent pas** la règle.
 
