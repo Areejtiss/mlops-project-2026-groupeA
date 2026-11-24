@@ -134,6 +134,8 @@ class MonitoringConfig(StrictModel):
     psi_alert: float = Field(gt=0)
     auc_drop_alert: float = Field(ge=0, lt=1)
     psi_bins: int = Field(ge=2)
+    min_rows: int = Field(ge=2)
+    min_labelled: int = Field(ge=2)
     key_features: list[str] = Field(min_length=1)
 
 
