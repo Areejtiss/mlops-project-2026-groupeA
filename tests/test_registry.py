@@ -88,6 +88,13 @@ def test_run_config_is_the_logged_cost_constraints_and_val_size() -> None:
     }
 
 
+def test_run_config_takes_val_size_not_test_size() -> None:
+    params = load_params(PARAMS_FILE)
+    data = params.data.model_copy(update={"test_size": 0.3, "val_size": 0.1})
+    other = params.model_copy(update={"data": data})
+    assert registry.run_config(other)["val_size"] == 0.1
+
+
 def test_search_is_filtered_on_the_server() -> None:
     seen: list[str] = []
 
@@ -256,6 +263,26 @@ def test_main_select_ignores_runs_on_other_data(
     synthetic_frame.head(10).to_parquet(other)
     with pytest.raises(SystemExit, match="no candidate run"):
         registry.main(["--select", "--train", str(other)])
+
+
+def test_main_select_reads_the_params_file_it_is_given(
+    store: Path, tmp_path: Path
+) -> None:
+    text = PARAMS_FILE.read_text(encoding="utf-8")
+    assert "cost_review: 0.3 " in text
+    other = tmp_path / "params.yaml"
+    other.write_text(text.replace("cost_review: 0.3 ", "cost_review: 0.5 "), "utf-8")
+    # The runs were logged with cost_review 0.3: none matches the other file.
+    with pytest.raises(SystemExit, match="no candidate run"):
+        registry.main(
+            [
+                "--select",
+                "--params",
+                str(other),
+                "--train",
+                str(store / "train.parquet"),
+            ]
+        )
 
 
 def test_main_refuses_an_experiment_winner_without_the_flag(
