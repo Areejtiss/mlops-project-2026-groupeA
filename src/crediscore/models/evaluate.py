@@ -48,6 +48,7 @@ import mlflow.sklearn
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from mlflow.entities.model_registry import ModelVersion
 from sklearn.metrics import roc_auc_score
 
 from crediscore.config import Params, PromotionConfig, load_params
@@ -276,17 +277,21 @@ def thin_target(model: dict[str, Any], baseline: dict[str, Any]) -> dict[str, An
     }
 
 
+def registry_version(ref: str) -> ModelVersion:
+    """The model version of `models:/<name>@<alias>` or `models:/<name>/<n>`."""
+    name, _, alias = ref.removeprefix("models:/").partition("@")
+    client = mlflow.MlflowClient()
+    if alias:
+        return client.get_model_version_by_alias(name, alias)
+    name, _, number = name.partition("/")
+    return client.get_model_version(name, number)
+
+
 def load_model(ref: str) -> tuple[Any, dict[str, float]]:
     """Model and its thresholds.json, from a `train` directory or `models:/`."""
     if ref.startswith("models:/"):
         model = mlflow.sklearn.load_model(ref)
-        name, _, alias = ref.removeprefix("models:/").partition("@")
-        client = mlflow.MlflowClient()
-        if alias:
-            version = client.get_model_version_by_alias(name, alias)
-        else:
-            name, _, number = name.partition("/")
-            version = client.get_model_version(name, number)
+        version = registry_version(ref)
         th = mlflow.artifacts.load_dict(f"runs:/{version.run_id}/thresholds.json")
         return model, th
     path = Path(ref)
