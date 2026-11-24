@@ -210,7 +210,7 @@ def auc_drop(
 
     Returns:
         The AUC drop (> 0 = the model got worse), or None when the current
-        batch has no label.
+        batch has no label. Current rows without a label are left out.
 
     Raises:
         ValueError: If a labelled batch holds a single class.
@@ -218,7 +218,7 @@ def auc_drop(
     if params.target not in current or current[params.target].isna().all():
         return None
     aucs = []
-    for batch in (reference, current):
+    for batch in (reference, current.dropna(subset=[params.target])):
         X, y = prepare_xy(batch, params)
         aucs.append(roc_auc_score(y, model.predict_proba(X)[:, 1]))
     return float(aucs[0] - aucs[1])
