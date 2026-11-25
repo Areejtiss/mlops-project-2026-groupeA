@@ -6,7 +6,7 @@
 
 - **Base read:** branch `dev` = `main` = `0de3860` (2026-10-11); `origin/feat/iyed-serving-cicd` = `91e5e1b` (2026-10-24, CI only, not merged).
 - **Owner:** Achraf Gharbi. **Written:** 2026-10-24.
-- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2), age rule anchored to the baseline the same day. Lot 2 implemented 2026-10-25 (see "Lot 2 progress"); `dvc.yaml` train stage deferred until Areej's pipeline exists. Lot 3 implemented 2026-11-24 (see "Lot 3 progress"): champion LightGBM v1 registered; test ROC-AUC, PR-AUC and the −15 % cost KPI missed, reported with their gaps.  Lot 4 implemented 2026-11-24 (see "Lot 4 progress"), with the promotion gate made relative (L4-1). Lots 6 and 7 implemented 2026-11-25 (see "Lot 6 progress", "Lot 7 progress"); Prefect wiring is Areej's.
+- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2), age rule anchored to the baseline the same day. Lot 2 implemented 2026-10-25 (see "Lot 2 progress"); `dvc.yaml` train stage deferred until Areej's pipeline exists.
 - **Integration with `dev` (2026-11-24).** The three branches are rebased onto `origin/dev` = `3ed70dc` (Areej's PR #2, DVC pipeline, and PR #3, drift simulator). Consequences:
   - **D2:** Areej's `crediscore.data.featurize` (`fix_days_employed` then `add_derived_features`) is THE shared function; our `data/features.py` is removed. Its float64 cast of the raw inputs (one-row requests with `None`) is ported into her file, in a commit for her review.
   - **D10:** her merged thin-file definition is adopted (at least 2 of 3 `EXT_SOURCE` missing, or `AMT_REQ_CREDIT_BUREAU_YEAR` NaN or 0): 39.7 % of the real train split, against 11.9 % for our old stand-in.
@@ -68,14 +68,10 @@ Contract 2 must state:
 > **Decided 2026-10-24 (Achraf):** the recommended option is adopted for D1, D2, D3, D4, D6, D8, D9, D10. D3 values: `cost_review = 0.3`, `max_review_share = 0.15`; D8 adds `min_recall = 0.65`. Team-facing summary and actions per member: `docs/decisions/2026-10-24-decisions-modelisation.md` (to paste in the PR description). Decisions marked "Team" stay open to objection from Areej and Iyed until the PR is approved.
 > **D5 decided 2026-10-25 (human), replacing "a then b":**
 > - **Gender: absolute gate.** The acceptance-rate gap (`ACCEPTE` only) between F and M, `XNA` excluded, must be ≤ 10 pts, and the equal-opportunity gap must also be ≤ 10 pts. Baseline: 7.8 / 6.6 pts.
-> - **Age bands (<30, 30–50, ≥50): no absolute gate.** Non-regression rule **anchored to the baseline** (refined 2026-10-25, human-approved): The anchor is the LogReg baseline's age equal-opportunity gap, recomputed by `evaluate` on the evaluation set it is given; the challenger's gap must be ≤ that + 2 pts. "Fixed" means tied to the baseline, never to the champion, so it cannot creep. Current value 38.7 pts, so the limit is 40.7 pts (history: 34.9 was the provisional lot 1 limit, on another split). It applies to the first promotion too (no champion needed), and cannot creep 2 pts at every promotion as "≤ champion + 2" would. Both age gaps are published at every evaluation and tracked over time (lot 6).
+> - **Age bands (<30, 30–50, ≥50): no absolute gate.** Non-regression rule **anchored to the baseline** (refined 2026-10-25, human-approved): the challenger's age equal-opportunity gap ≤ the **baseline's** gap + 2 pts, i.e. ≤ 34.9 pts. The anchor is the LogReg baseline recomputed by `evaluate` in lot 3 on the same test split; until then 32.9 pts (lot 1). It is fixed, applies to the first promotion too (no champion needed), and cannot creep 2 pts at every promotion as "≤ champion + 2" would. Both age gaps are published at every evaluation and tracked over time (lot 6).
 > - **Why (for the report):** age is a real risk driver in this data (the <30 band defaults about 2× the ≥50 band: 11.4 % vs 5.7 %) and a model feature. The baseline age gap is 34.5 pts raw / 32.9 pts equal opportunity, so an absolute 10-pt rule would block every promotion.
 > - Lot 3 adds one MLflow experiment, LightGBM without `AGE_YEARS`, to measure the AUC/cost vs age-gap trade-off.
 > - The teacher is told that the SYNOPSIS KPI "gap ≤ 10 pts" now applies to gender, and that age is "measured, explained, without degradation".
->
-> **Promotion gate revised 2026-11-24 (L4-1, human-approved "adopt the recommended option"):** the gate is **relative**. The current champion scores test AUC 0.7469, so an absolute "AUC ≥ 0.75" on a fresh batch would block every promotion. Challenger and champion are scored on the same held-out batch, each with its own thresholds; promote iff AUC_ch ≥ AUC_champ, cost_ch ≤ cost_champ, both gender gaps ≤ 10 pts and age EO gap ≤ anchor + 2 pts (anchor = baseline age EO gap read from `reports/metrics.json`; missing = fail closed). No champion: fairness gates only. 0.75 / 0.25 / −15 % stay reported KPIs. Tolerances in `params.yaml` `promotion:` (`max_gender_gap_pts: 10`, `age_gap_margin_pts: 2`).
->
-> **Promotion completed 2026-11-24 (lot 4 review, human policy "take the recommended option"):** `--data` is **required**: a fresh labelled batch that is **not the test split** (production or Areej's simulated batch; `test.parquet` only for a manual demo, named explicitly). Fail closed below `promotion.min_rows: 5000` rows (`batch_too_small`) or with fewer than 2 gender groups of `promotion.min_group_rows: 500` rows (`gender_groups_missing`). `thresholds.json` is authoritative (version tags must equal it, else `thresholds_mismatch`). Write order: tags, then delete `challenger`, then move `champion` last; challenger == champion → `already_champion`. Any error → `failed: ["error", "<message>"]`, exit 1.
 >
 > **Closed 2026-10-24:** D7: no fixed dates; lots run back to back, as fast as quality allows. D11: the commit e-mail is Achraf's and is linked to his GitHub account.
 
@@ -87,7 +83,7 @@ Wording for non-developers in each line. Technical decisions are at the end.
 | D2 | Ratios like "annuity / income" are computed by Areej's data step. At prediction time someone must compute them **exactly the same way**, or the model sees different numbers than in training ("train/serve skew") | a) the model artifact starts with Areej's function, so the API sends raw fields (`DAYS_BIRTH`…); this changes contracts 1, 2 and 3 · b) the API calls the same shared function before the model; the model takes `params.features.all` · c) the client sends already-computed ratios | **b)**: keeps contract 1 and the model input as they are; one shared function, imported by both Areej's step and Iyed's API, plus a test that both paths give identical columns | **Whole team** | lot 2 (contract 2) |
 | D3 | With 3 zones (accept / review / refuse), what does one manual review cost, compared to a missed default (5) and a wrongly refused good client (1)? | a) add `cost.cost_review` and optimize both cut-offs · b) a fixed grey band around one cut-off · c) review band sized by analyst capacity (e.g. ≤ 10 % of files) | **a) + a capacity cap (c)**. With review = 0.3 the optimum is "accept if risk < 6 %, refuse if > 70 %": about **half** the applicants would go to review, which is unrealistic. A cap like "≤ 15 % of files to review" keeps it usable. Share of files in review shown with the numbers in lot 1 | Achraf + Areej (params) | lot 2 |
 | D4 | Exact decision strings in the API answer | a) `ACCEPTE` / `A_ETUDIER` / `REFUSE` · b) `ACCEPTÉ` / `À ÉTUDIER` / `REFUSÉ` (roadmap and SYNOPSIS) | **a)**: no accents or spaces in a machine code; accents in the report and UI only. Also fix `params.yaml:85` | **Whole team** (contract 3) | lot 1 |
-| D5 | Fairness gate for promotion. SYNOPSIS: "acceptance-rate gap ≤ 10 pts". Under-30s default about 2× more than over-50s, and age is itself a model feature, so the age gap may exceed 10 pts at any useful cut-off and **no model would ever be promoted** | a) measure on the baseline first (lot 1), then decide · b) gate on "equal opportunity": among clients who **did** repay, the acceptance gap between groups ≤ 10 pts; report the raw gap too · c) keep the raw gap | **Decided 2026-10-25 (human):** gender, absolute gate, raw ≤ 10 pts **and** equal opportunity ≤ 10 pts (XNA excluded); age, non-regression anchored to the baseline: challenger's equal-opportunity gap ≤ baseline's + 2 pts; the anchor is the LogReg baseline's age equal-opportunity gap, recomputed by `evaluate` on the evaluation set it is given; the challenger's gap must be ≤ that + 2 pts. "Fixed" means tied to the baseline, never to the champion, so it cannot creep. Current value 38.7 pts, so the limit is 40.7 pts (history: 34.9 was the provisional lot 1 limit, on another split); also for the first promotion; both age gaps published and tracked. Tell the teacher | Team | lot 4 |
+| D5 | Fairness gate for promotion. SYNOPSIS: "acceptance-rate gap ≤ 10 pts". Under-30s default about 2× more than over-50s, and age is itself a model feature, so the age gap may exceed 10 pts at any useful cut-off and **no model would ever be promoted** | a) measure on the baseline first (lot 1), then decide · b) gate on "equal opportunity": among clients who **did** repay, the acceptance gap between groups ≤ 10 pts; report the raw gap too · c) keep the raw gap | **Decided 2026-10-25 (human):** gender, absolute gate, raw ≤ 10 pts **and** equal opportunity ≤ 10 pts (XNA excluded); age, non-regression anchored to the baseline: challenger's equal-opportunity gap ≤ baseline's + 2 pts (≤ 34.9 pts until lot 3 recomputes the baseline on the final test split), fixed, also for the first promotion; both age gaps published and tracked. Tell the teacher | Team | lot 4 |
 | D6 | PR target branch | a) `main` · b) `dev`, then release to `main` | ~~a)~~ **b), revised 2026-11-24:** the team merges PRs into `dev` (PR #2, #3); our PRs target `dev`. Ask Iyed to run CI on PRs to `dev`, add `feature/**` to the push trigger and fix `cache: poetry` | Team | first PR |
 | D7 | Real dates of S3…S8, Jalon 2, and the defense | — | needed to date the lots and re-plan | Human | planning |
 | D8 | With 3 zones, how do the SYNOPSIS KPIs count "to review"? Recall ≥ 65 %: is a default sent to review "detected"? Acceptance rate and fairness: is review "accepted"? | a) review = detected for recall, **not** accepted for acceptance/fairness (prudent reading) · b) review = accepted everywhere · c) KPIs computed on a 2-zone cut (review merged into refuse) | **a)**. The single cost-optimal cut-off (risk 1/6) gives a recall of only ~50 % at AUC 0.76, so the 65 % target needs either a) or a recall constraint in the optimizer (applied anyway) | Team | lot 2 |
@@ -421,107 +417,6 @@ The `--sample` run on the 5k fixture finishes in under a minute, for Iyed's CML.
 - any target missed is **reported as missed to the team and teacher**, not silently relaxed;
 - the Brier score is reported.
 
-**Lot 3 coordinator decisions (final):**
-- **L3-1 selection:** candidates need validation ROC-AUC ≥ 0.75 if any reaches it; the best has the lowest validation cost per file under the D3/D8 constraints; ties are broken by validation AUC. The test split is never used for selection. By design, an experiment-tagged winner aborts registration (`--allow-experiment` forces it).
-- **L3-2 Optuna:** 20–30 trials each for LightGBM and XGBoost, 5-fold stratified CV ROC-AUC on the fit part, TPE seeded, nested runs.
-- **L3-3 registry:** `crediscore`; `champion` if none exists, else `challenger`; tags as in contract 2 §7. No promotion logic (lot 4). **Revised 2026-11-25 (lots 6-7 review, important 2):** always `challenger`, even the first model; `promote` gates it (fairness only without a champion), so its exit 0 always means deploy. `--select` exits 3 when the selected run is the champion's, and a full tie keeps the champion's run.
-- **L3-4 baseline:** `evaluate` compares the model with a LogReg baseline trained identically on the same train.parquet, on test. KPI = (cost_model − cost_base) / cost_base.
-- **L3-5 no_age:** an extra LightGBM run without `AGE_YEARS`, tag `experiment=no_age`.
-- **L3-6 honesty:** missed targets are reported with their gap; a target is never relaxed and nothing is tuned on test.
-- **Added 2026-11-24 (review of `a3e3db0`):**
-  - a run trained with `--exclude` is an experiment: `train --exclude` requires `--experiment`, and `registry` treats any run tagged `excluded_features` as an experiment;
-  - a candidate must have been logged with the costs, constraints and `val_size` of the current `params.yaml`; the data-hash and top-level filters run in the MLflow query;
-  - D5 age anchor wording (product clarification): the anchor is the LogReg baseline's age equal-opportunity gap, recomputed by `evaluate` on the evaluation set it is given; "fixed" means tied to the baseline, never to the champion, so it cannot creep; current value 38.7 pts, limit 40.7 pts;
-  - thin-file KPI (product decision, recommended option): the literal SYNOPSIS KPI is the pass flag in `kpi.targets.thin_file`; next to it, the thin good-payer acceptance rate and the default rate among accepted thin files, champion vs baseline; the whole-portfolio ratio is informative only.
-
-**Lot 3 progress (2026-11-24, branch `feature/model-registry`, on `origin/dev` with Areej's pipeline):**
-- [x] 1. `random_forest` and `xgboost` in `build_pipeline` (test `26dedfb`, code `51075eb`).
-- [x] 2. Optuna (`models/tune.py`, `train --tune N`): seeded TPE, 5-fold stratified CV ROC-AUC on the fit part, one nested MLflow run per trial (`df0c5d1`, `df3b280`).
-- [x] 2b. D5 experiment: `train --exclude AGE_YEARS --experiment no_age --model-params` (same commits); real run below.
-- [x] 3. `models/evaluate.py` (`5cb81df`, `b107283`); `reports/metrics.json` committed as a DVC metric.
-- [x] 4. `models/registry.py`: L3-1 selection + registration, `champion` / `challenger` (`bddbe66`, `f6680ab`).
-- [x] 5. Behaviour tests (`b49f36e`). CML `--sample` on the 5k fixture: under a minute (4–5 s, measured in lot 2).
-- [x] 6. `dvc.yaml` stages `train` and `evaluate` (this pass, test committed first). `train` = LightGBM with the tuned params of the selected run, frozen in `configs/champion_model_params.json`; each stage lists only the modules and params keys it reads; `train` never depends on `test.parquet` (tested). `dvc repro evaluate` ran end to end: same validation numbers as the MLflow run, and `models/model.joblib` gives **exactly** the probabilities of `models:/crediscore@champion` (max diff 0.0 on 20 000 rows).
-- [x] 7. Real runs on the MLflow server, registration, evaluate on test, REST checks (below).
-- [ ] Adversarial review by a fresh agent, and walkthrough.
-- Checks: black, flake8, mypy strict green; **336 tests** (326 before this pass), total coverage 92 % (models: `evaluate` 99 %, `registry` 99 %, `train` 99 %, `tune` 100 %; the misses are the `__main__` lines, plus two guards in `train.py` that no test reaches: `log_to_mlflow` without an active run and `--tune` on a model without a search space).
-
-**Measured, validation (16 000 rows carved from Areej's `train.parquet`, md5 `d0178dc…`; test not read for selection):**
-
-| Run (experiment `crediscore`) | ROC-AUC | PR-AUC | Brier | Recall (D8) | Review | Cost/file | Run id |
-|---|---|---|---|---|---|---|---|
-| logreg | 0.7558 | 0.2382 | 0.0680 | 71.9 % | 14.8 % | 0.3395 | `1a16047475464bd4a5881b7ddb4df3a8` |
-| random_forest (300 trees, leaf 20, fixed) | 0.7480 | 0.2337 | 0.0682 | 69.3 % | 15.0 % | 0.3326 | `bc029f926b51446fa2293f16f0edb61c` |
-| **lightgbm, Optuna 25 trials (CV 0.7519)** | **0.7670** | **0.2574** | **0.0670** | 69.7 % | 14.9 % | **0.3070** | `1c3f3b8712aa43d491ec3882bf64e70e` |
-| xgboost, Optuna 25 trials (CV 0.7512) | 0.7648 | 0.2543 | 0.0671 | 71.0 % | 11.4 % | 0.3428 | `2f5b60577b3c4081b6df59b1f43f4b9e` |
-| lightgbm-no_age (D5, tuned LightGBM params) | 0.7649 | 0.2507 | 0.0672 | 69.4 % | 14.0 % | 0.3136 | `be2f0c6472d441d19e93443e9bf5b2a8` |
-
-Accept all: 0.4037 per file. Each tuned run has its 25 nested trial runs (checked through the REST API).
-
-- **Selection (L3-1):** every run meets the D3/D8 constraints; the 0.75 AUC floor drops random_forest; the lowest cost is LightGBM. **Registered `crediscore` version 1, alias `champion`**, from run `1c3f3b87…`, with the contract 2 §7 tags. REST: `GET registered-models/alias?name=crediscore&alias=champion` → v1, READY; `models:/crediscore@champion` reloads on the host with the same probabilities as the local artifacts.
-- The 7 runs of 2026-10-25 (lot 2 and an earlier lot 3 attempt) were trained on the throwaway prep (other `train_data_hash`): they stay on the server and the selection ignores them.
-
-**Measured, test (20 000 rows, `evaluate`; baseline LogReg retrained identically on the same train.parquet; `reports/metrics.json`):**
-
-| | Baseline LogReg | Champion LightGBM v1 | Target | Status |
-|---|---|---|---|---|
-| ROC-AUC | 0.7346 | 0.7469 | ≥ 0.75 | **missed by 0.003** |
-| PR-AUC | 0.2079 | 0.2267 | ≥ 0.25 | **missed by 0.023** |
-| Brier | 0.0692 | 0.0685 | ≤ 0.07 | met (0.0015 margin) |
-| Recall (D8) | 69.4 % | 66.9 % | ≥ 65 % | met (+1.9 pt) |
-| Review share | 14.4 % | 14.5 % | (≤ 15 % on validation) | |
-| Cost per file | 0.3519 | 0.3203 | −15 % vs baseline | **missed: −9.0 %** (6.0 pts short; −15 % needs ≤ 0.2991) |
-| Cost vs accept all (0.4037) | −12.8 % | −20.7 % | | |
-| Gender gap raw / EO (D5) | 8.4 / 7.0 | 7.7 / 6.3 | ≤ 10 / ≤ 10 | met |
-| Age gap raw / EO (D5) | 39.7 / 38.7 | 34.6 / 33.1 | EO ≤ baseline + 2 = 40.7 | met |
-
-- **KPI status:** recall and Brier met; ROC-AUC, PR-AUC and the −15 % cost KPI missed, with the gaps above. Nothing was relaxed and nothing was tuned on test (L3-6). The three models evaluated on test all lose about 0.02 AUC from validation (LogReg 0.756 → 0.735, LightGBM 0.767 → 0.747, no_age 0.765 → 0.746): the drop is shared, not specific to the selected model. To be reported to the team and the teacher.
-- **D5 anchor (clarified 2026-11-24):** the anchor is the LogReg baseline's age equal-opportunity gap, recomputed by `evaluate` on the evaluation set it is given; the challenger's gap must be ≤ that + 2 pts. "Fixed" means tied to the baseline, never to the champion, so it cannot creep. Current value 38.7 pts, so the limit is 40.7 pts (history: 34.9 was the provisional lot 1 limit, on another split). Contract 2 §1 and the decisions doc carry the same wording.
-
-**D5 experiment (LightGBM without `AGE_YEARS`, same tuned params, measured on test after the selection):**
-
-| | With `AGE_YEARS` (v1) | Without | Baseline |
-|---|---|---|---|
-| ROC-AUC / PR-AUC | 0.7469 / 0.2267 | 0.7463 / 0.2251 | 0.7346 / 0.2079 |
-| Cost per file (vs baseline) | 0.3203 (−9.0 %) | 0.3267 (−7.1 %) | 0.3519 |
-| Age gap raw / EO (pts) | 34.6 / 33.1 | **37.1 / 35.6** | 39.7 / 38.7 |
-| Gender gap raw / EO (pts) | 7.7 / 6.3 | 8.3 / 6.8 | 8.4 / 7.0 |
-| Acceptance <30 / 30–50 / ≥50 | 46.9 / 63.9 / 81.5 % | 42.9 / 65.9 / 80.0 % | 37.3 / 61.0 / 76.9 % |
-
-- Removing age does **not** reduce the age gap: it grows by 2.5 pts (EO), under-30 acceptance drops by 4 pts, and the cost rises. A likely reading (not proven here): age stays proxied by other features (employment years, `DAYS_*`, family), while the model loses the direct signal that separates good young applicants. Keeping `AGE_YEARS` is both cheaper and fairer on age; the report should say so.
-
-**Thin file (D10, Areej's definition):**
-- 39.4 % of the test split is thin file (39.7 % of train; 11.9 % under our old stand-in). The segment is no longer a small "no external score" niche but two applicants in five: at least 2 missing `EXT_SOURCE` **or** no bureau enquiry recorded for the last year (`AMT_REQ_CREDIT_BUREAU_YEAR` 0 or NaN).
-- **SYNOPSIS KPI, literal (the pass flag, `kpi.targets.thin_file`): met.** The champion accepts **4 946 thin good payers vs 0** for "refuse without history" (target 2 × 0, and more than none).
-- Companions (`kpi.targets.thin_file.companion`), champion vs baseline:
-  - thin good payers accepted: **68.4 % vs 61.8 %** of them (+6.6 pts);
-  - default rate among accepted thin files: **3.96 % vs 3.79 %** (+0.17 pt). The champion accepts more thin files (65.4 % vs 58.9 % of the segment), and their loss rate rises very slightly: "sans augmenter les pertes" holds within 0.2 pt, not strictly. To be said in the report.
-- Champion thin-file ROC-AUC 0.755 (higher than on the whole test).
-- Informative only: whole-portfolio ratio of good payers accepted vs the scorecard (refuse every thin file, our decision elsewhere) 12 928 / 7 982 = **1.62** (baseline 1.59); the scorecard costs 0.553 per file vs 0.320. With 39 % of files thin, ×2 on the whole portfolio is out of reach by construction, so it is not a target.
-
-**Lot 3 mutation check (own, before the adversarial review):** 49 mutants on `evaluate.py`, `registry.py`, `tune.py` and the `train --tune/--exclude` path, on a `git archive` copy of `9ec520c` (no `.git`; unmutated suite first: 323 passed, 8 skipped for absent processed data). **49 run, 40 killed, 9 survived.** The 9 survivors were real test gaps, now covered: accept-all with a proba of 1.0 (#14); baseline model name, baseline thresholds and the class-1 column in `evaluate.main` (#24–26); nested trial runs and the candidate field mapping in `registry` (#34, #40); CV folds and `scale_pos_weight` in `tune` (#41, #43); the excluded feature list passed to `tune` (#48). Replay of the 9 with the new tests (unmutated selected suite first: 76 passed): **9 run, 9 killed**. Logs: `scratchpad/lot3/mutation.log` and `scratchpad/lot3/mutation_replay.log` of the session.
-
-**Deviations and why:**
-- The `train` stage trains a fixed champion config (model + frozen Optuna params in `configs/`) instead of tuning at every `dvc repro`: tuning is a one-off MLflow experiment, and the stage must stay reproducible and fast (about 1 min). Changing the champion config is a reviewed commit on that file.
-- `dvc.lock` is committed with the `train` and `evaluate` entries only. Our `train` deps record `train.parquet` md5 `d0178dc…` (what Areej's `split` writes today), while the committed `split` entry still says `d75701c…`: `featurize.py` changed in the float64-cast commit for Areej's review, and her lock entries are hers to refresh. `dvc repro` also rewrote `tests/fixtures/ci_sample.parquet` and `reports/validation.json` (pyarrow version / line endings): restored with `git checkout`.
-- `evaluate` was also run on the `no_age` model, for the D5 measurement only (output kept out of the repo). The champion had already been chosen on validation.
-
-**Lot 3 correction pass (2026-11-24, review of `a3e3db0`: "ready with corrections", no blocking item):**
-- [x] Important 1: `train --exclude` requires `--experiment`; `registry` treats a run tagged `excluded_features` as an experiment (`excluded:<cols>`), so it never registers silently.
-- [x] Important 2: one D5 anchor wording in the decisions doc, this plan and contract 2 §1; 34.9 kept only as a history note.
-- [x] Important 3: "Lot 3 coordinator decisions" block above.
-- [x] Important 4: thin-file KPI in `kpi.targets.thin_file` (literal flag + companions); `reports/metrics.json` regenerated with `dvc repro -s evaluate`; numbers in "Thin file" above and in contract 2 §8.
-- [x] Important 5 and minors: tests kill the reviewer's survivors #7, #17, #28, #29, #43 (the registry test store is now a throwaway git repo) and #54/#55 (search spaces pinned).
-- [x] Minor: the MLflow query filters on `train_data_hash` and on top-level runs (`mlflow.parentRunId IS NULL`); candidates must carry the `params.yaml` costs, constraints and `val_size` (`run_config`). Read-only check on the real server: same champion, `1c3f3b87…`.
-- [x] Minor: `train` and `evaluate` depend on `config.py`, `evaluate` also on `tune.py` (tested against each stage's import graph); relocked, data-stage entries untouched.
-- [x] Minor: `configs/` added to Achraf's row in `CLAUDE.md`; corrupted coverage line fixed.
-- Kept as is: taking `GENDER_COL` from `params.sensitive_cols` in `evaluate.py` is not a one-liner (`fairness` would need a new argument at every call), so the ponytail note stays until lot 4's `promotion.*` params.
-- Found during the pass: `evaluate` wrote `reports/metrics.json` with CRLF on Windows, so the md5 in `dvc.lock` never matched the LF file Git checks out (`eol=lf`), and `dvc status` showed `evaluate` as modified after a commit. Fixed with `newline="\n"` (test committed first) and relocked.
-- Also found: with the new `--exclude` guard, the old unknown-column test exited on that guard instead (reviewer mutant #62 survived). The test now passes `--experiment`.
-- **Reviewer's `mutate.py` replayed** on a `git archive` copy of `3a06add`. Unmutated suites first: full suite 340 passed, 8 skipped; reviewer test list 118 passed. Result: **65 mutants, 61 killed, 1 survived (#62, fixed above), 3 skipped** (#33, #40, #41: their lines changed). Follow-up run with the fixed test: #62 killed; the 3 skipped mutants, adapted to the new lines, killed; 6 new mutants on the new code killed (10 of 10). Final checks: black, flake8, mypy strict green; 348 tests; coverage 93 %. Logs: `scratchpad/lot3/reviewer_replay.log` and `scratchpad/lot3/reviewer_replay_extra.log` of the session.
-
-**Review round 2: ready; 86 mutants, 81 killed, 5 survivors (2 equivalent, 3 covered by these tests)**: `run_config` with `test_size != val_size` (#69), `registry --select` with another `--params` file (#72), the thin-file portfolio ratio companion taken from the model, not the baseline (#84).
-
 ### Lot 4 — S5: SHAP, fairness, promotion (Jalon 3) · branch `feature/explainability-fairness` · ~10 h incl. 2 review rounds (promotion is critical)
 
 **Depends on:** lot 3 and D5.
@@ -543,11 +438,11 @@ Tests:
 - a single-group input;
 - an empty group.
 
-**3. `models/promote.py`.** *(Revised 2026-11-24, L4-1: relative gate. `auc_ch ≥ 0.75` is dropped and `cost_ch ≤ cost_champ` is added; the age anchor is read from `reports/metrics.json` (38.7 pts, limit 40.7) and a missing anchor fails closed; exit 0 = promoted, 1 = not; `reports/promotion.json`; `--dry-run`. The text below is the original version.)* The challenger becomes champion iff **all** of these hold on the same fresh held-out set (T7):
+**3. `models/promote.py`.** The challenger becomes champion iff **all** of these hold on the same fresh held-out set (T7):
 - `auc_ch ≥ auc_champ`;
-- ~~`auc_ch ≥ 0.75`~~ (removed 2026-11-24);
+- `auc_ch ≥ 0.75`;
 - **gender (D5)**: the acceptance-rate gap (`ACCEPTE` only) between F and M, `XNA` excluded, is ≤ 10 pts, **and** the equal-opportunity gap is ≤ 10 pts;
-- **age bands (D5)** (<30, 30–50, ≥50): non-regression anchored to the baseline, `eo_gap_age_ch ≤ eo_gap_age_baseline + 2` pts: the anchor is the LogReg baseline's age equal-opportunity gap, recomputed by `evaluate` on the evaluation set it is given; the challenger's gap must be ≤ that + 2 pts. "Fixed" means tied to the baseline, never to the champion, so it cannot creep. Current value 38.7 pts, so the limit is 40.7 pts (history: 34.9 was the provisional lot 1 limit, on another split). It applies to the first promotion too. No absolute age gate. Both age gaps are logged at every evaluation.
+- **age bands (D5)** (<30, 30–50, ≥50): non-regression anchored to the baseline, `eo_gap_age_ch ≤ eo_gap_age_baseline + 2` pts (baseline = LogReg recomputed by `evaluate` on the same test split; 32.9 pts until then, so ≤ 34.9). Fixed: it applies to the first promotion too and cannot creep. No absolute age gate. Both age gaps are logged at every evaluation.
 
 Otherwise nothing changes, and the exit code and log say why. The thresholds come from `params.yaml` (`promotion` key: 10 pts gender, +2 pts age tolerance).
 
@@ -562,62 +457,6 @@ Stop point: a short review before it is wired into Prefect.
 **4. Handover to Iyed** (pairing session): SHAP for `/predict`.
 
 **Done when:** Iyed's API shows the 3 SHAP factors, and `promote.py` decides correctly on all test cases.
-
-**Lot 4 progress (2026-11-24, branch `feature/explainability-fairness`, on `a3e3db0`):**
-- [x] Params (L4-1, `(for Areej's review)`): `promotion.max_gender_gap_pts: 10`, `promotion.age_gap_margin_pts: 2`, `PromotionConfig` with bounds [0, 100], tests first.
-- [x] 2. `fairness/audit.py` (L4-2): acceptance (ACCEPTE only), equal-opportunity and recall (D8) rates per `CODE_GENDER` (XNA and missing excluded, counted) and per age band; max gaps in points; `d5_checks` (value, limit, pass; gaps compared at 1e-9 pts so `100 * (0.4 - 0.3)` is still 10). `evaluate` now takes its fairness numbers from the audit and its D5 tolerances from `params.promotion`; `reports/metrics.json` is **byte-identical**: `dvc repro -s evaluate` writes md5 `6382b250…`, the lot 3 lock value (the git blob differs only by CRLF). The `evaluate` stage now depends on `fairness/audit.py` and `promotion`; `dvc.lock` relocked (evaluate entry only).
-- [x] 1. `explain/shap_explainer.py` (L4-3): `Explainer(model)` built once; `explain(frame)` → 3 `Factor(feature, value, contribution)` per row on original columns; `contributions()` for additivity; units per contract 2 §6. Summary plot (bar of mean |contribution|, 2 000 train rows) in `reports/figures/shap_summary.png` and on the user's MLflow: run `a146f2b6842d42adac5da1979fa5d0cd`, tag `kind=shap_summary`, `model_run_id` = champion run `1c3f3b87…`. Top features: EXT_SOURCE_3, EXT_SOURCE_2, EXT_SOURCE_1, AMT_GOODS_PRICE, CREDIT_TERM.
-- [x] SHAP latency, local, champion v1, 200 real test rows one at a time: `explain` p50 13.1 ms, **p95 14.9 ms** (target < 50 ms); `predict_proba` + `explain` p95 33.2 ms; build 0.35 s. CI: `slow`-marked test, p95 < 500 ms.
-- [x] 3. `models/promote.py` (L4-1, relative gate, see the decisions block). Real checks: `--dry-run` on the user's server → `no_challenger`, registry identical before/after (REST). Throwaway server (sqlite, port 5321, stopped): v1 = champion artifact, v2 = no_age as challenger → **not promoted, failed `auc` (0.7463 < 0.7469) and `cost` (0.3267 > 0.3203)**; gender 8.3 / 6.8 pts and age EO 35.6 ≤ 40.7 pass; exit 1; aliases unchanged. The champion's batch scores equal `reports/metrics.json`. Then the champion run re-registered as v3 challenger → promoted (equal AUC and cost), `champion` → v3, `challenger` removed, `promoted_at` and `promotion_*` tags set, exit 0.
-- [x] 4. Hand-off to Iyed: contract 2 §10 (French); snippet run on raw test row `SK_ID_CURR 100295` with `OCCUPATION_TYPE = None`: `A_ETUDIER`, proba 0.0978, top factors EXT_SOURCE_2 (+0.40), EXT_SOURCE_1 (+0.21), REGION_POPULATION_RELATIVE (−0.16).
-- [ ] Adversarial review by a fresh agent (promotion is critical: two rounds) and walkthrough. Stop point before the Prefect wiring (Areej).
-- Checks: black, flake8, mypy strict green; **412 tests** (336 before); coverage 94 %; `audit` 100 %, `shap_explainer` 99 %, `promote` 99 %, `evaluate` 99 % (the misses are `__main__` lines).
-
-**Lot 4 mutation check (own):** 54 mutants on `audit.py`, `shap_explainer.py` and `promote.py`, on a `git archive` copy of `73cfdca` (`PYTHONPATH` checked to import the copy; unmutated suite first: exit 0). **54 run, 51 killed, 3 survived.** #1 (`len(rates) > 0` in `gap_pts`) is equivalent (one group gives 0 either way). #7 (recall gap computed from the raw rates) and #49 (promote's audit with `high` as `low`) were real gaps, now covered; replay with the new tests (unmutated selected suite first: exit 0): **2 run, 2 killed**. Logs: `scratchpad/lot4/mutation.log` and `scratchpad/lot4/mutation_replay.log` of the session.
-
-**Deviations and why:**
-- The gate is relative (L4-1, human-approved): AUC 0.75 and −15 % cost are KPIs, not gates; cost ≤ champion's is added.
-- SHAP base value is computed from the model, for robustness: the classifier's raw margin on an all-zero row (LightGBM `booster_.predict(raw_score=True)`, XGBoost `get_booster().predict(output_margin=True)`, LogReg `decision_function`; RF in probability) minus the SHAP sum there. *Corrected by the review:* shap 0.51's XGBoost 3 `expected_value` offset is not a fixed 0.04: it varies with the number of trees (+0.009 / −0.023 log-odds measured by the reviewer) and is 0 with `scale_pos_weight`, the production path. The first version took the logit of `predict_proba` (float32 for XGBoost); the review replaced it by the raw margins.
-- LogReg reference without background: training mean for scaled numerics, "no category" for one-hot (no training data needed at API startup); a `background` frame can be passed.
-- The summary plot is a matplotlib bar chart of mean |contribution| on original columns (a beeswarm cannot colour categorical columns); computed on train rows, not test.
-- `evaluate.registry_version` extracted (resolves a `models:/` URI) and reused by the explainer CLI.
-- The audit also publishes per-group recall; `evaluate` keeps only its previous keys, so `metrics.json` is unchanged.
-- ~~A batch with a single gender group gives a gap of 0 and passes~~: fixed in the correction pass (`gender_groups_missing`).
-
-**Lot 4 coordinator decisions (all final; product ones follow the human's standing policy "take the recommended option"):**
-
-| # | Decision | Date |
-|---|---|---|
-| L4-1 | Relative promotion gate on the same batch, own thresholds: AUC ≥ champion's, cost ≤ champion's, gender raw and EO gaps ≤ 10 pts, age EO gap ≤ anchor + 2 pts (anchor from `reports/metrics.json`, missing = fail closed); no champion = fairness only; exit 0/1, `reports/promotion.json`; tolerances under `params.promotion` | 2026-11-24 |
-| L4-2 | `fairness/audit.py` is the single home of the fairness numbers; `evaluate` refactored with `metrics.json` byte-identical | 2026-11-24 |
-| L4-3 | `explain/shap_explainer.py`: `Explainer` built once, top 3 factors on original columns, units per contract 2 §6, summary plot logged to MLflow (`kind=shap_summary`) | 2026-11-24 |
-| L4-4 | Hand-off to Iyed in contract 2 §10 (French), snippet run on a raw test row | 2026-11-24 |
-| L4-5 | Out of scope: Prefect wiring (Areej), API code (Iyed) | 2026-11-24 |
-| I1 | Near-atomic promotion: tags (incl. `promotion_previous_champion`), then delete `challenger`, then move `champion` last; challenger == champion → `already_champion`, exit 1 | 2026-11-24 (review) |
-| I2 | `promotion.min_rows: 5000` (`batch_too_small`) and `promotion.min_group_rows: 500` with at least 2 gender groups (`gender_groups_missing`), both fail closed | 2026-11-24 (review) |
-| I3 | `--data` required; promotion runs on a fresh batch, never the test split (except a named manual demo) | 2026-11-24 (review) |
-| I4 | `evaluate` stage relocked at HEAD; it lists only `promotion.max_gender_gap_pts` and `promotion.age_gap_margin_pts` | 2026-11-24 (review) |
-| m6 | `thresholds.json` is authoritative; version tags must match (`thresholds_mismatch`) | 2026-11-24 (review) |
-| m5 | Any error rewrites `reports/promotion.json` with `failed: ["error", "<message>"]`; the file is git-ignored | 2026-11-24 (review) |
-
-**Lot 4 correction pass (2026-11-25, review of `c92feca`: "ready with corrections", nothing blocking):**
-- [x] I1: `apply_promotion` writes the tags (incl. `promotion_previous_champion`), deletes `challenger`, moves `champion` last; `already_champion` no-op. Tests: call order spied; a client raising on `delete_registered_model_alias` or on `set_registered_model_alias` leaves `champion` on v1, and the re-run records previous champion `1` (promoted after the first, `no_challenger` after the second).
-- [x] I2 (for Areej's review): `promotion.min_rows: 5000`, `promotion.min_group_rows: 500`, both > 0 and `min_rows ≥ 2 × min_group_rows`; `batch_too_small`, `gender_groups_missing` (XNA not counted), tested.
-- [x] I3: `--data` required (argparse exit 2 without it); docstring, contract §1 and the decisions block say: fresh batch, not the test split.
-- [x] I4: `dvc repro -s evaluate` at HEAD: `metrics.json` md5 `6382b250…` unchanged; the evaluate stage lists only `promotion.max_gender_gap_pts` and `promotion.age_gap_margin_pts`; only the evaluate lock entry changed.
-- [x] Minor 1–10: `registry_version` alias test (v2 under `@champion`); LogReg contributions = `coef × x_transformed`, base = intercept; base from the raw margin (LightGBM `booster_`, XGBoost `output_margin`, LogReg `decision_function`, RF probability), additivity against raw margins for the 4 models and a test that `predict_proba` is never used for a log-odds base; XGBoost offset wording fixed (plan, contract §6, code comment); fatal errors rewrite the decision file (stale-file test); `thresholds_mismatch` (tags differ, absent or unreadable); age anchor rejects bool, NaN, ±inf; `/reports/promotion.json` git-ignored (shared file); contract §10 sign wording (non-decreasing `proba`) and the exact raw request columns (23 numeric + `DAYS_BIRTH`, `DAYS_EMPLOYED` + 10 categorical).
-- Found while replaying: the new `registry_version` test failed when run after other MLflow tests (stale active experiment id); fixed by setting its own experiment (`5fba2ff`). The reviewer's survivor #46 (`value.item()` branch) was dead code: `to_numpy(dtype=object)` already yields plain Python values; branch removed (`aa14056`).
-- Serving snippet re-run after the base change: same output (`A_ETUDIER`, 0.0978, same 3 factors).
-- **Reviewer probes replayed** on `git archive` copies (originals copied, not modified): `probe_shap.py`: additivity vs raw margin 1.8e-15 (LogReg), 1.7e-14 (LightGBM), 3.9e-6 (XGBoost, float32), 2.7e-15 (RF); p95 5.6 / 11.0 / 10.4 / 15.7 ms. `probe_shap2.py`: XGBoost offset without `scale_pos_weight` +0.0091 / −0.0232, additivity vs `output_margin` 3.4e-6 / 1.2e-6; contract row unchanged. `probe_promote.py` as written stops at B with `thresholds_mismatch`: it registers versions with `mlflow.register_model` without copying the threshold tags, which the gate now rejects by design. A v2 copy that tags versions like `registry.register` runs to the end: A `no_challenger`; B promote (equal), tags set; C own thresholds kept, `cost` fails; D anchor boundary exact (pass at `age − 2`, fail 1e-6 below), NaN / inf / missing / bool anchor → `age_anchor_missing`; E no champion → fairness only; F no thresholds.json → `error`; G `thresholds_mismatch`; H `delete` raising → aliases unchanged, re-run promotes with previous champion `2` (true); I, J (3 000 / 2 000 rows) → `batch_too_small`. Throwaway server port 5331 stopped.
-- **Reviewer `mutate.py` replayed** on a `git archive` copy of `5fba2ff` (unmutated selected suite first: 146 passed): **53 mutants, 48 killed, 1 survived, 4 skipped** (lines rewritten by the fixes: #24, #29, #39, #40). Survivor #46 = the dead branch, removed afterwards. Logs: `scratchpad/lot4/review_mutation2.log`, `review_probe_promote.log` (original probe), `review_probe_promote_v2.log`, `review_probe_shap.log`, `review_probe_shap2.log` of the session. A first replay (`review_mutation.log`) is void: its unmutated suite had the failing test above.
-- Checks: black, flake8, mypy strict green; **441 tests**; coverage 94 %; `audit` 100 %, `promote` 99 %, `shap_explainer` 99 %, `evaluate` 99 % (the misses are `__main__` lines).
-
-**Lot 4 review round 2 (2026-11-25): "ready with corrections"; decisions final, product ones by the standing policy "adopt the recommended option":**
-- [x] R1 (survivor #65): the CHAMPION version's `threshold_high` tag differing from its thresholds.json gives `thresholds_mismatch`, exit 1 (the check was only tested on the challenger). Kills "challenger only" and "high tag ignored".
-- [x] R3: `promoted_at` is written after the champion alias move (one extra tag call), so an aborted promotion never carries it; the other `promotion_*` tags, `promotion_previous_champion` included, stay first. Failure-injection test (`set_registered_model_alias` raising), call-order test updated, contract 2 §1 and the decisions doc. Known ceiling: if only that last write fails, the alias has moved and the version has no `promoted_at` (exit 1, `error`).
-- [x] R2 (product decision): **fresh hold-out batch for promotion.** `featurize` samples 100 000 of the 307 511 raw rows; the new DVC stage `holdout` (after `featurize`, `src/crediscore/data/holdout.py`, `data.holdout_size: 20000`, all "for Areej's review") draws 20 000 labelled rows, stratified and seeded, from the raw rows NOT in `features.parquet`, and processes them with Areej's own functions (`drop_sparse_columns` guard, `fix_days_employed`, `add_derived_features`, `output_columns`). `dvc repro -s holdout`: **20 000 rows, 1 615 defaults = 8.075 %** (sample 8.073 %), 13 250 F / 6 750 M, thin files 39.4 %; md5 `8bc410e8…`. Only the `holdout` lock entry was added. Tests: no `SK_ID_CURR` overlap with `features.parquet`, columns and dtypes of `test.parquet`, default rate within ±0.5 pt, deterministic and seeded, identical to `featurize` on the same raw rows, refused when too few rows are left, rebuilt from the raw CSV (slow). Own mutants on `holdout.py`: 6 run, 6 killed.
-- Promotion batch (contract 2 §1, `promote.py` docstring and `--help`, decisions doc): `data/processed/holdout.parquet`, or a real labelled production batch. `data/simulated/economic_crisis.parquet` reuses test rows: drift-detection demo only, never a promotion batch.
-- `dvc push` of `holdout.parquet` is left to the coordinator (MinIO is read-only for this session).
 
 ### Lot 5 — S6: drift computation (Jalon 4) · branch `feature/drift-detection` · ~10 h incl. review
 
@@ -644,67 +483,6 @@ Stop point: a short review before it is wired into Prefect.
 
 **Done when:** on Areej's "crise économique" batch, the module flags drift and writes the JSON and the HTML.
 
-**Lot 5 coordinator decisions (final, 2026-11-24; product ones follow the standing "adopt the recommended option").**
-- **L5-1** `monitoring:` key in `params.yaml` + `MonitoringConfig` (never under Areej's `drift:`): alpha 0.05, drift_share_alert 0.30, psi_alert 0.20, auc_drop_alert 0.03, psi_bins 10, key features `AMT_INCOME_TOTAL`, `AMT_CREDIT`, `ANNUITY_INCOME_RATIO`, `EXT_SOURCE_2`.
-- **L5-2** `drift_share` = share of model features whose KS (numeric, non-missing values) or χ² (categorical, missing = a category) p-value < alpha.
-- **L5-3** PSI written by hand on the reference quantiles, deduplicated, open-ended outer bins, epsilon, NaN bin, categorical PSI with unseen categories.
-- **L5-4** alert = drift_share ≥ 0.30, or PSI ≥ 0.20 on a key feature, or auc_drop > 0.03.
-- **L5-5** auc_drop = reference AUC − current AUC of the same caller-provided model; `null` without current labels.
-- **L5-6** Evidently 0.7.23 `DataDriftPreset` HTML in `reports/drift/<YYYY-MM-DD_HHMMSS>.html`, JSON next to it; `reports/drift/` not committed.
-- **L5-7** CLI `python -m crediscore.monitoring.drift --reference --current [--model] [--out-dir]`, exit 0 whatever the alert; DVC stage `detect_drift` after `simulate_crisis`, `latest.json` `cache: false`.
-- **L5-8** `docs/contracts/04-drift-report.md` (French), proposal for Areej and Iyed.
-- **After review (NOT READY, 1 blocking, 4 important, 10 minor):**
-  - **B1** PSI interval bins: edges halfway between each deduplicated reference quantile and the next distinct reference value, NaN bin and open-ended outer bins kept, 0/1 columns at 2 bins.
-  - **I1** auc_drop `null` when a labelled batch holds fewer than 2 classes.
-  - **I2** `monitoring.min_rows: 500` (below: PSI/KS/χ² published, but drift_share and PSI do not raise the alert) and `monitoring.min_labelled: 1000` (below, or fewer than `monitoring.min_positives: 50` positives: auc_drop `null`). `min_positives` moved from a module constant to `params.yaml` on the coordinator's request (`ge=1`, tested, for Areej's review).
-  - The constant-column PSI pad, 1e-6 × max(|c|, 1), stays a documented module constant (`_CONSTANT_PAD` in `drift.py`): an implementation detail of the binning, not a tuning knob.
-  - **I3** Prometheus alerts on an `alert` gauge (0/1) and an `auc_drop` gauge; per-feature rules, if any, only on `psi{feature=~"<key_features>"}`; no new JSON key.
-  - **Minor 1** a feature empty on one side only counts as drifted (KS p = 0); `null` only when both sides are empty. **Minor 2** empty batch → `ValueError("empty batch…")`. **Minor 3** naive `now` → `ValueError`; timestamp without microseconds.
-
-**Lot 5 status (2026-11-24): review round 2 verdict "ready" (minor corrections only, done).** Round 1 was NOT READY; correction pass done. Branch `feature/drift-detection`, built on lot 3 in progress, then stacked on 2026-11-25: `feature/model-registry` ⊂ `feature/explainability-fairness` ⊂ `feature/drift-detection`.
-- [x] 1. Contract 4 written and revised (`docs/contracts/04-drift-report.md`, French), **proposal for Areej and Iyed**.
-- [x] 2. `monitoring/drift.py`: `psi`, `ks_test`, `chi2_test`, `drift_share`, `is_alert`, `auc_drop`, `compute_drift_report`, `write_html`, CLI `main`. `monitoring:` in `params.yaml` + `MonitoringConfig` with `min_rows`, `min_labelled` and `min_positives` (each key feature must be a model feature), "(for Areej's review)".
-- [x] 3. Tests: `tests/test_psi.py` (25), `tests/test_drift.py` (63), 14 new in `test_config.py`.
-- [x] 4. Evidently 0.7.23 HTML + JSON + `latest.json`; DVC stage `detect_drift`; `/reports/drift/` git-ignored. `latest.json` carries a timestamp: a **non-reproducible** output, uncached, git-ignored, regenerated at each run. Deps include `config.py`, `models/evaluate.py` (`load_model`) and `models/train.py` (`prepare_xy`).
-- [x] 5. Concept drift: `auc_drop(model, reference, current, params)` on the labelled rows of both batches; `null` when not computable (I1, I2).
-- Real runs, after B1 (a local LightGBM copied to `models/lightgbm`, see the caveat below; test = 20 000 rows). Old → new where it changed:
-
-  | Current vs reference | drift_share | Drifted (KS / χ² p < 0.05) | Key PSI (income / credit / annuity ratio / EXT_SOURCE_2) | auc_drop | alert |
-  |---|---|---|---|---|---|
-  | Economic crisis vs test | 0.171 (7/41) | income, credit, annuity, the 3 ratios, `EMPLOYED_YEARS` | **2.971 → 0.262** / **0.579 → 0.231** / 0.677 → 0.676 / 0.000 | 0.033 (0.816 → 0.784) | **true** |
-  | Test half B vs half A (seed 42) | 0.024 (1/41, `EMPLOYED_YEARS`) | — | 0.006 → 0.004 / 0.004 → 0.003 / 0.003 / 0.003 (max PSI 0.011, `ORGANIZATION_TYPE`) | 0.003 | false |
-  | Scenario C: 30 % of "Commercial associate" labels flipped vs test | 0.000 | none | all 0 | 0.162 (0.816 → 0.654) | **true** |
-
-  Top PSI on the crisis, new: `ANNUITY_INCOME_RATIO` 0.676, `CREDIT_INCOME_RATIO` 0.409, `AMT_INCOME_TOTAL` 0.262, `AMT_CREDIT` 0.231, `AMT_ANNUITY` 0.178, `EMPLOYED_YEARS` 0.099, `CREDIT_TERM` 0.089 (old: income 2.97, `CREDIT_TERM` 0.70, ratio 0.68, credit 0.58, `CREDIT_INCOME_RATIO` 0.41). The Evidently HTML lists the 41 features and flags the same 7. Logs: `scratchpad/lot5/fix/real_runs_v2.log`, `real_inspect_v2.log`.
-- **Demo note (2:30):** the Evidently HTML headline applies Evidently's own rule (dataset drift if ≥ 30 % of the columns drift) and says "Dataset Drift is NOT detected" on the crisis (17 %), while our JSON says `alert = true`. The JSON is the source of truth: show the per-feature PSI and the JSON, not the headline.
-- Deviations and choices:
-  - `compute_drift_report(reference, current, params, *, auc_drop=None, now=None)` instead of `labels=None`: the AUC needs the model, so the caller computes `auc_drop` first (core stays pure). It also rejects a non-finite `auc_drop` (found by the reviewer's p4 probe).
-  - PSI bins (B1): inner edges halfway between each inner reference quantile (method `lower`, so a reference value) and the next distinct reference value; outer edges half a gap beyond the min and the max; a constant column gets a ±1e-6·max(|c|, 1) bin; a value on an edge goes to the upper bin. The **dedup** of quantiles was cosmetic with the old point bins (`searchsorted` gave the same partition); now it merges the deciles that fall on one heaped value into a single edge, so a 0/1 column has one edge (0.5) and two value bins. Epsilon 1e-4 floors each share. NaN always has its own bin.
-  - `ks` and `chi2` hold **p-values**. χ² keeps scipy's default Yates correction (2 categories), pinned by a test.
-  - `monitoring.min_positives: 50` is a `params.yaml` key (it was a module constant until the coordinator's last request).
-  - Evidently's "chi-square" is a goodness-of-fit test against the reference proportions; ours is the two-sample independence test. Test vs test, Evidently flags 3 categoricals, we flag none. On numerics both agree (tested).
-  - **`dvc.lock` data entries are stale** since the featurize float64-cast commit (awaiting Areej's review): `dvc repro` re-runs validate/featurize/split, whose outputs are equal in content (the md5s differ through pyarrow/line-ending artifacts). They are restored with `git checkout` and `dvc.lock` is not committed for `detect_drift`; `dvc repro -s detect_drift` runs the stage alone.
-  - The model is a local artifact of 2026-10-25 (`crediscore-lot2/models/lightgbm`), trained before Areej's current split: AUC 0.816 on today's test ≈ 0.820 on today's train, vs 0.754 on its own validation, so its training rows likely overlap today's test. The AUC **levels** are not meaningful; the **drops** are. Re-run with lot 3's final champion once rebased.
-- Probes of the reviewer, replayed from copies on the corrected code (outputs in `scratchpad/lot5/fix/replay/`):
-  - p2/p3: jitter × (1 ± 1e-9), float32 round-trip and +1 unit give PSI 0.000 on every probed feature (were up to 4.46); small current batches from test: median max key PSI 0.142 at 100 rows, 0.028 at 500, alert rate 0 at every size.
-  - p4: empty batches and naive `now` raise; single-class and 3-row labels give `auc_drop` null; reference NaN labels no longer crash; a NaN `auc_drop` argument is now refused by `compute_drift_report` (fix after this replay).
-  - p10 (copy adapted to `null`): below 1 000 labelled rows, auc_drop is null (0/40 computed at 200 and 500); at 1 000, sd 0.021 and 1/40 false alert; at 2 000, sd 0.014 and 0/40.
-- Mutation:
-  - Own set before the review: 41 mutants, round 1 38 killed / 3 survived, round 2 39/39 (`scratchpad/lot5/mutation_drift.log`, `mutation_drift_round2.log`). **That "0 survivors" was the implementer's own set only:** the reviewer's set (44 mutants, `rl5/probes/mutation.log`) had **12 survivors, 3 of them equivalent** (#05 no dedup, #12 dtype from current, #13 categorical swap).
-  - Reviewer's `mutate.py` replayed from a copy on the corrected HEAD (`scratchpad/lot5/fix/mutation_reviewer_replay.log`, 122 passed unmutated): **38 valid, 36 killed, 2 survived** (#12 and #13, equivalent: categorical PSI is symmetric in its terms, and both inputs share a dtype), 6 invalid (lines rewritten by the fix).
-  - Own correction-pass set (`scratchpad/lot5/fix/mutate_v2.py`): round 1 (`mutation_own_v2.log`, 122 passed unmutated): **43 valid, 41 killed, 2 survived** (constant pad without `max(…, 1)`, edge side `left`), both killed by two new tests. Round 2 on the final HEAD (`mutation_own_v2_round2.log`, 124 passed unmutated): **43 valid, 43 killed, 0 survived**.
-- **Review round 2: ready.** The reviewer's campaign on the new lines (32 mutants, `rl5/probes2/mutate2.py`) gave 29 killed and 3 survivors: #17 (`n_rows` from the current batch only), #20 (`min_rows` hard-coded) and #22 (`min_labelled` hard-coded). Three tests now cover them: a 300-row reference against a 2 000-row shifted current gives no alert; the small-batch guard follows `min_rows` and `auc_drop` follows `min_labelled`, both changed through `params.model_copy`. Replay of the reviewer's script, copied, on a `git archive` copy of the HEAD with those tests (129 passed unmutated): **32 valid, 32 killed, 0 survived** (log `scratchpad/lot5/fix2/mutation_reviewer2_replay.log` of the session).
-- Checks: black, flake8 and mypy clean; **428 tests pass** (326 before the lot), coverage 93 %, `drift.py` 99 % (the `__main__` line), `config.py` 100 %.
-- **Re-run with lot 3's champion (2026-11-25, after stacking lot 3 → lot 4 → lot 5):** `models/model.joblib` from `dvc repro -s train` (md5 `66def444…`, the model of `reports/metrics.json`, never trained on the test split), same batches (crisis `drift.seed = 7`; halves and scenario C rebuilt with the same script and seed 42). Data-drift numbers are unchanged (they do not use the model); only `auc_drop` moves, old (2026-10-25 local artifact) → new:
-
-  | Current vs reference | AUC reference → current | auc_drop | alert |
-  |---|---|---|---|
-  | Economic crisis vs test | 0.816 → 0.784 ⇒ **0.747 → 0.738** | 0.033 → **0.009** (now below 0.03) | true (now from the key PSI only) |
-  | Test half B vs half A | ⇒ 0.749 → 0.744 | 0.003 → 0.005 | false |
-  | Scenario C vs test | 0.816 → 0.654 ⇒ **0.747 → 0.621** | 0.162 → **0.126** | true |
-
-  The caveat above on AUC levels no longer applies: these levels are the champion's. Contract 4 §8 updated.
-
 ### Lot 6 — S7: closing the loop (with Areej) · ~6 h
 
 1. Prediction drift (PSI on the probabilities, shift in acceptance rate) added to the report.
@@ -713,28 +491,6 @@ Stop point: a short review before it is wired into Prefect.
 4. MLflow screenshots (runs comparison, Registry) for the slides.
 
 **Done when:** automatic promotion is verified on a real case, with the history visible in the Registry.
-
-**Lot 6 coordinator decisions (final, 2026-11-25):**
-- **L6-1 prediction drift:** with `--model`, contract 4 gets an optional `prediction` object: `psi_proba` (same PSI as the features, bins on the reference), `acceptance_rate_ref` / `acceptance_rate_cur` (ACCEPTE share with the model's thresholds.json), `acceptance_rate_delta_pts`. Informative, alert rule unchanged. **Choice:** the key is always present, `null` without a model (fixed keys stay the contract's rule); `prediction` and `fairness` are appended after `alert`, so the seven old keys keep their order.
-- **L6-2 fairness over time:** optional `fairness` object: `evaluate.fairness` fields (gender and age raw / EO gaps, acceptance by group) on the labelled current rows with the model's decisions, plus `d5` = `{age_anchor_pts, checks, pass}` against the anchor of `--metrics` (default `reports/metrics.json`, `null` if absent). `null` without model, without `TARGET` or `CODE_GENDER`, or when the current batch fails the `auc_drop` label guard (`min_labelled`, `min_positives`, one class). Informative, no alert.
-- **L6-3 hand-off:** `docs/handoff/boucle-reentrainement.md` (French): detect_drift (exit 0 whatever the alert, read `alert`) → `train --model lightgbm --model-params configs/champion_model_params.json` (**frozen params, not `--tune`**: reproducible, about 1 min, challenger differs from the champion only by its data; tuning stays a reviewed one-off) → `registry --select --train <same file>` (no retry: each success is a new version; no champion = it becomes champion and promote says `no_challenger`) → `promote --data data/processed/holdout.parquet` (0 = promoted, call Iyed's Blue/Green; 1 = keep). End-to-end test on sqlite.
-- **L6-4 real check:** throwaway sqlite MLflow, port 5341, stopped afterwards.
-
-**Lot 6 progress (2026-11-25, branch `feature/monitoring-loop`, on `feature/drift-detection` 2e51110):**
-- [x] 1. Prediction drift (`prediction_drift`, tests `db0cc7d`, code `8a1c320`).
-- [x] 2. Fairness over time (`fairness_drift`, same commits). `_labelled` is now shared by `auc_drop` and `fairness_drift` (same guard). The `detect_drift` DVC stage runs without a model (both keys `null`), so its deps are unchanged.
-- [x] Contract 4 §9 (French), **for Areej and Iyed's review** (`6f2285a`): fields, `null` rule, proposed gauges (`acceptance_rate` from `acceptance_rate_cur`, `fairness_d5_pass`…, no alert rule), real example.
-- [x] 3. Loop hand-off for Areej (`1d5ea79`) and `tests/test_monitoring_loop.py` (`6eb9bae`, about 13 s, not marked `slow`: the marker is for timing tests): bootstrap champion, drift alert with `prediction` and `fairness`, retrain on a refreshed file, `registry --select` → challenger v2, promote **blocked by the D5 age gate** (the synthetic challenger learned the age signal more strongly: 24.5 pts vs limit 21.6; exit 1, aliases unchanged), then promoted with a test-only age margin of 10 (exit 0, champion → v2, challenger removed, `promotion_previous_champion = 1`, `promoted_at`).
-- [x] **Real chain** (throwaway server, port 5341; a first attempt failed on the Windows 260-character path limit of the scratchpad artifacts dir, rerun with a short temp dir): `models/model.joblib` logged and registered as **v1 champion**; crisis vs test with `--model models:/crediscore@champion`: drift_share 0.171, key PSI 0.262 / 0.231 / 0.676, auc_drop 0.009, **alert true**, `psi_proba` 0.031, acceptance 0.673 → 0.625 (−4.85 pts), fairness D5 pass (gender 7.8 / 6.5, age EO 34.0 ≤ 40.7); `train` frozen params on `train.parquet`: val AUC 0.7670, cost 0.3070 (identical to the champion); `registry --select`: tie, newest run chosen, **v2 challenger**; `promote --data data/processed/holdout.parquet`: **exit 0, promoted** (AUC 0.7591 = 0.7591, cost 0.3141 = 0.3141, gender 7.9 / 6.9, age EO 32.2 ≤ 40.7); Registry after: `champion` → v2, no `challenger`, v2 tagged `promotion_previous_champion = 1` and `promoted_at`. The challenger is the same model (same data and params): this proves the chain, not a gain. Server stopped.
-- [ ] 4. MLflow screenshots (runs comparison, Registry): **for the human**, from the team's MLflow UI (this session has read-only access and no browser capture).
-- [ ] Prefect wiring (`monitoring_flow`, `training_flow`, `run_deployment`, retries): **Areej's**, from the hand-off. Blue/Green call after exit 0: **Iyed's**.
-- **Own mutation check:** 33 mutants on the new drift code (prediction and fairness parts), `git archive` copy of `1d5ea79`, unmutated suite first (exit 0, imports checked from the copy). Round 1: 30 mutants, 28 killed, 1 survived, 1 invalid (match lost to black's reformatting). Round 2: the invalid one fixed plus 2 more: 3 killed. **Total 32 valid, 31 killed, 1 survivor, equivalent:** `fairness_drift` with `high` replaced by `low` (the audit only counts ACCEPTE, which depends on `low` only). Logs: `scratchpad/lot67/mut/mutation.log` and `mutation_extra.log` of the session.
-- Checks (2026-11-25, after lot 7): black, flake8, mypy strict green; **601 tests pass** (574 before the lot), coverage 94 %, `drift.py` 99 % (the `__main__` line).
-
-**Doubts / follow-ups:**
-- `registry --select` picks among every run on the same `train_data_hash`: with unchanged data the old champion's run ties with the new one (the newest wins on the real server). Harmless (same model), but Areej should only trigger training on refreshed data.
-- The first-ever model is registered straight as `champion`; the flow has to read `registry`'s `@champion` line to deploy it (documented, no exit-code change).
-- `fairness` uses the current batch's labels; in production they arrive months late, so the key is mostly `null` on fresh traffic. That is by design (label guard).
 
 ### Lot 7 — S8: report and slides · ~4 h
 
@@ -747,31 +503,6 @@ Stop point: a short review before it is wired into Prefect.
 - why aliases rather than Staging/Production (SYNOPSIS L48 still says Staging → Production).
 
 **Slides and rehearsal:** results/KPI slides; rehearse the 1:00 and 2:30 demo slots.
-
-**Lot 7 decisions (coordinator, 2026-11-25):** all in French in `docs/rapport/`; every number cites a committed file (`reports/metrics.json`, this plan, contracts 2 and 4, the hand-off); missed targets stated plainly (AUC 0.747 vs 0.75, PR-AUC 0.227 vs 0.25, cost −9 % vs −15 %).
-
-**Lot 7 progress (2026-11-25):**
-- [x] `docs/rapport/modelisation.md` (`421aa45`, `309f12b`): MLflow comparison and test table, thresholds and cost (3 zones, D3/D8), SHAP (global figure, local example 100295, units, calibration caveat), fairness (D5, no_age experiment and the decision to keep age, thin file, fairness over time), drift (crisis, halves, scenario C, why the crisis AUC drop is small while PSI alerts, the PSI bin bug as a lesson), aliases vs stages, KPI table.
-- [x] `docs/rapport/slides-modelisation.md` (`583bc6c`): 6 slides with speaker notes, the 1:00 and 2:30 demo slots and what to prepare.
-- [x] `docs/rapport/walkthrough-achraf.md` (`c3e10d3`): one block per module (cost, split, pipeline, threshold, train, tune, evaluate, registry, promote, holdout, audit, shap_explainer, drift) and the guide's §9.3 MLflow / Evidently questions.
-- [ ] Rehearsal of the 1:00 and 2:30 slots, and the MLflow screenshots: the human.
-- [x] Adversarial review of lots 6-7 (review of `23a5297`: "ready with corrections", nothing blocking); correction pass below.
-- [ ] Walkthrough with Achraf.
-
-**Lots 6-7 correction pass (2026-11-25, on `a80c90d`, decisions final, product ones by the standing "adopt the recommended option"):**
-- [x] I1 endless re-promotion: (a) `registry --select` registers nothing and exits **3** (`nothing to register: selected run is already champion`) when the selected run is behind `@champion` (tests `50ca372`, code `ba7ba11`); (b) hand-off: the `training_flow` runs only when the training file's md5 differs from the champion's `train_data_hash`, exit 3 = nothing to do, no deploy (`af7b4e5`). **Found while replaying the reviewer's cycle 2:** (a) alone did not stop the loop, because a retrain on unchanged data ties exactly with the champion's run and the newest run won. Technical fix: `select_run(prefer=<champion run>)` keeps the champion's run on a full tie (cost and AUC), never over a better run (tests `6ba1694`, code `2db1de9`).
-- [x] I2 first model gated: `register` always sets `@challenger`; promote tests build their champion through a helper; the loop test promotes the bootstrap model (exit 0, fairness only). Contract 2 §1/§7 (`37f0ed1`, for Areej and Iyed's review), hand-off (stdout-parsing step and "first model deployed anyway" row removed), L3-3 note above.
-- [x] I3 `fairness.d5` without a gender comparison: `gender_groups_ok` extracted from promote's `batch_check` (XNA excluded, `promotion.min_group_rows`) and reused; below 2 groups, `d5.pass = null`, `reason = "gender_groups_missing"`, checks and gaps published; `reason` is a fixed key (`null` otherwise). Tests all F, all XNA, boundary, labelled rows only (`f8a2ef9`, `fd34217`); contract 4 §9.2 and §9.4 (`c4b399c`).
-- [x] I4/I5 and minors in the report, slides and walkthrough (`37ca969`, `14d30d5`, `63c5e15`): PSI bug figure (jitter on unchanged data ≈ 2.9; 2.971 → 0.262 is the crisis income), alert → training_flow with `drift_alert` as a display gauge, baseline recall 69.3 %, applied midpoint cuts from `baseline_metrics.json` (plan values named as steps), XGBoost sentence from committed numbers, like-for-like recall on the slides, hedged no_age reading, hold-out reused at every promotion, each model's imbalance option (LightGBM `is_unbalance`), the gate's known limit (AUC, cost and fairness only).
-- [x] Hand-off minors: `--output-dir models/challenger`; crash between the two alias writes (re-set `@challenger` by hand, then re-run promote); orphan version ignored by promote; documented bootstrap wording in contract 4 §9.4 and hand-off §6; example key order `age_anchor_pts, checks, pass, reason`.
-- [x] Survivor #36 killed: CLI test without `--metrics` from a cwd holding `reports/metrics.json` (`f8a2ef9`).
-- The loop test now measures the age anchor on the promotion batch (on 1 500-row synthetic sets, test and hold-out age gaps differ by a few points of sampling noise alone: 19.6 vs 23.9 for the same model), shows a blocked run with a test-only 0-pt margin, then promotes with the real 2-pt margin. About 20 s.
-- **Replays** (logs in the session's `scratchpad/lot67fix/`):
-  - reviewer's replay steps adapted, throwaway server port 5341 (stopped): bootstrap → v1 `@challenger` → promote exit 0 (gender 7.9 / 6.9, age EO 32.2 ≤ 40.7) → `champion` v1; crisis drift alert true (psi_proba 0.031, acceptance 0.673 → 0.625); retrain on the same file → `registry` exit 3; second cycle exit 3; one version in the end (`replay_adapted.log`);
-  - reviewer probes p1-p3 from copies (`probes_replay.log`): p1 recompute matches (psi_proba 0.0305, acceptance −4.85 pts, gaps 7.77 / 6.46 and 35.46 / 34.00); p2 single gender group, 10 men, all XNA, 1 000 labelled rows → `d5.pass` null; p3 old PSI on jitter 2.906, crisis income 2.971;
-  - reviewer's `mutate.py` on a `git archive` copy of `2db1de9` (unmutated suite first: 120 passed): **38 mutants, 37 killed, 0 survived, 1 invalid** (#19, the `d5.pass` line it targets was rewritten by I3; `all` → `any` is still killed by `test_fairness_drift_d5_fails_when_one_check_fails`, replayed on the new line: `mutation_any_replay.log`) (`mutation_reviewer_replay.log`);
-  - own set on the new code, second copy (`mutation_own.log`): **22 mutants, 21 killed, 1 survivor, equivalent** (#12, `champion_run_id` returning `''` instead of `None`: neither matches a run id).
-- Checks after the pass: black, flake8, mypy strict green; **612 tests pass** (601 before), coverage 95 %; `registry` 99 %, `promote` 99 %, `drift` 99 % (the `__main__` lines).
 
 ---
 

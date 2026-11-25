@@ -48,32 +48,6 @@ stages:
     outs:
       - data/processed/features.parquet
 
-  # Promotion batch (for Areej's review): data.holdout_size labelled raw rows
-  # NOT in features.parquet, processed like featurize. Never read by train,
-  # evaluate or the drift simulator.
-  holdout:
-    cmd: python -m crediscore.data.holdout
-    deps:
-      - src/crediscore/data/holdout.py
-      - src/crediscore/data/featurize.py
-      - src/crediscore/data/sampling.py
-      - src/crediscore/data/schema.py
-      - src/crediscore/config.py
-      - data/raw/application_train.csv
-      - data/processed/features.parquet
-    params:
-      - data.raw_path
-      - data.processed_dir
-      - data.holdout_size
-      - data.random_state
-      - data.missing_threshold
-      - id_col
-      - target
-      - sensitive_cols
-      - features
-    outs:
-      - data/processed/holdout.parquet
-
   split:
     cmd: python -m crediscore.data.split
     deps:
@@ -93,68 +67,6 @@ stages:
       - tests/fixtures/ci_sample.parquet:
           cache: false
 
-  # Champion candidate chosen by L3-1 (validation only): LightGBM with the
-  # Optuna params of its MLflow run, frozen in configs/. Logs to MLflow only
-  # if MLFLOW_TRACKING_URI is set. Never reads the test split.
-  train:
-    cmd: >-
-      python -m crediscore.models.train --model lightgbm
-      --model-params configs/champion_model_params.json --output-dir models
-    deps:
-      - src/crediscore/models/train.py
-      - src/crediscore/models/pipeline.py
-      - src/crediscore/models/split.py
-      - src/crediscore/models/threshold.py
-      - src/crediscore/models/cost.py
-      - src/crediscore/models/tune.py
-      - src/crediscore/config.py
-      - configs/champion_model_params.json
-      - data/processed/train.parquet
-    params:
-      - data.val_size
-      - data.random_state
-      - target
-      - features
-      - cost
-      - threshold.min_recall
-      - threshold.max_review_share
-    outs:
-      - models/model.joblib
-      - models/thresholds.json
-
-  # Test metrics of the model vs the LogReg baseline retrained on the same
-  # train.parquet (KPI -15 %), thin file (D10), fairness (D5), targets.
-  evaluate:
-    cmd: python -m crediscore.models.evaluate --model models
-    deps:
-      - src/crediscore/models/evaluate.py
-      - src/crediscore/fairness/audit.py
-      - src/crediscore/models/train.py
-      - src/crediscore/models/pipeline.py
-      - src/crediscore/models/split.py
-      - src/crediscore/models/threshold.py
-      - src/crediscore/models/cost.py
-      - src/crediscore/models/tune.py
-      - src/crediscore/config.py
-      - models/model.joblib
-      - models/thresholds.json
-      - data/processed/train.parquet
-      - data/processed/test.parquet
-    params:
-      - data.val_size
-      - data.random_state
-      - target
-      - features
-      - cost
-      - threshold.min_recall
-      - threshold.max_review_share
-      - promotion.max_gender_gap_pts
-      - promotion.age_gap_margin_pts
-    metrics:
-      # Small JSON, versioned in Git (not in the DVC cache).
-      - reports/metrics.json:
-          cache: false
-
   # Drifted version of the test set, used to test drift detection (Achraf).
   simulate_crisis:
     cmd: python -m crediscore.monitoring.simulator
@@ -167,27 +79,3 @@ stages:
       - drift
     outs:
       - data/simulated/economic_crisis.parquet
-
-  # Drift report of the crisis batch against the test set (Achraf, contract 4).
-  # The timestamped JSON/HTML pair lands next to latest.json, outside DVC.
-  detect_drift:
-    cmd: >-
-      python -m crediscore.monitoring.drift
-      --reference data/processed/test.parquet
-      --current data/simulated/economic_crisis.parquet
-      --out-dir reports/drift
-    deps:
-      - src/crediscore/monitoring/drift.py
-      - src/crediscore/config.py
-      - src/crediscore/models/evaluate.py   # load_model
-      - src/crediscore/models/train.py      # prepare_xy
-      - data/processed/test.parquet
-      - data/simulated/economic_crisis.parquet
-    params:
-      - features
-      - monitoring
-    # latest.json carries a timestamp, so it is not reproducible byte for
-    # byte: uncached, git-ignored, regenerated at each run.
-    outs:
-      - reports/drift/latest.json:
-          cache: false

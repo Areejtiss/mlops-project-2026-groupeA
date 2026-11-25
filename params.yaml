@@ -12,7 +12,6 @@ data:
   random_state: 42          # same seed everywhere = reproducible runs
   missing_threshold: 0.6    # drop columns with more than 60% missing values
   ci_sample_size: 5000      # committed fixture used by CI and CML
-  holdout_size: 20000       # labelled rows outside the sample: promotion batch
 
 id_col: SK_ID_CURR          # identifier, never a feature
 target: TARGET              # 1 = payment difficulties (~8% positives)
@@ -95,14 +94,6 @@ threshold:
   max_review_share: 0.15  # at most 15% of files sent to review (D3)
   min_recall: 0.65        # defaults detected, review counted as detected (D8)
 
-# Promotion gate (models/promote.py, D5): challenger vs champion on the same
-# held-out batch. Gaps are acceptance-rate gaps in percentage points.
-promotion:
-  max_gender_gap_pts: 10  # gender raw and equal-opportunity gaps, inclusive
-  age_gap_margin_pts: 2   # age equal-opportunity gap <= baseline's + this
-  min_rows: 5000          # smaller batch: not promoted (gaps too noisy)
-  min_group_rows: 500     # rows per gender group (XNA excluded), at least 2 groups
-
 # Drift simulation (monitoring/simulator.py), used to test drift detection.
 drift:
   seed: 7                   # same seed -> same drifted batch
@@ -111,20 +102,3 @@ drift:
     credit_factor: 1.25     # loans (credit and annuity) grow by 25%
     employment_factor: 0.7  # employment seniority shrinks by 30% (job losses)
     noise_std: 0.05         # relative gaussian noise on the shifted columns
-
-# Drift DETECTION (monitoring/drift.py, Achraf): alert thresholds of the drift
-# report (contract 4). Separate from `drift:` above, which configures the simulator.
-monitoring:
-  alpha: 0.05               # a feature drifts when its KS / chi2 p-value < alpha
-  drift_share_alert: 0.30   # alert when >= 30% of the model features drift
-  psi_alert: 0.20           # alert when the PSI of one key feature is >= 0.20
-  auc_drop_alert: 0.03      # alert when reference AUC - current AUC > 0.03
-  psi_bins: 10              # quantile bins of the reference for the PSI
-  min_rows: 500             # smaller batches: drift_share and PSI do not raise the alert
-  min_labelled: 1000        # fewer labelled rows in a batch: auc_drop is null
-  min_positives: 50         # fewer defaults in a labelled batch: auc_drop is null
-  key_features:             # features whose PSI alone can raise the alert
-    - AMT_INCOME_TOTAL
-    - AMT_CREDIT
-    - ANNUITY_INCOME_RATIO
-    - EXT_SOURCE_2

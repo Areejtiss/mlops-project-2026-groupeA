@@ -32,7 +32,6 @@ class DataConfig(StrictModel):
     random_state: int = Field(ge=0)
     missing_threshold: float = Field(gt=0, lt=1)
     ci_sample_size: int = Field(gt=0)
-    holdout_size: int = Field(gt=0)
 
     @model_validator(mode="after")
     def ci_sample_smaller_than_sample(self) -> Self:
@@ -95,21 +94,6 @@ class ThresholdConfig(StrictModel):
         return self
 
 
-class PromotionConfig(StrictModel):
-    """Promotion gate (D5): gap tolerances in points, minimum batch sizes."""
-
-    max_gender_gap_pts: float = Field(ge=0, le=100)
-    age_gap_margin_pts: float = Field(ge=0, le=100)
-    min_rows: int = Field(gt=0)
-    min_group_rows: int = Field(gt=0)
-
-    @model_validator(mode="after")
-    def two_groups_fit_in_the_batch(self) -> Self:
-        if self.min_rows < 2 * self.min_group_rows:
-            raise ValueError("min_rows must be at least twice min_group_rows")
-        return self
-
-
 class EconomicCrisisConfig(StrictModel):
     """Intensity of the "economic crisis" drift scenario (multiplicative factors)."""
 
@@ -126,20 +110,6 @@ class DriftConfig(StrictModel):
     economic_crisis: EconomicCrisisConfig
 
 
-class MonitoringConfig(StrictModel):
-    """Drift detection: alert thresholds of the drift report (contract 4)."""
-
-    alpha: float = Field(gt=0, lt=1)
-    drift_share_alert: float = Field(gt=0, le=1)
-    psi_alert: float = Field(gt=0)
-    auc_drop_alert: float = Field(ge=0, lt=1)
-    psi_bins: int = Field(ge=2)
-    min_rows: int = Field(ge=2)
-    min_labelled: int = Field(ge=2)
-    min_positives: int = Field(ge=1)
-    key_features: list[str] = Field(min_length=1)
-
-
 class Params(StrictModel):
     """The whole params.yaml file."""
 
@@ -150,9 +120,7 @@ class Params(StrictModel):
     features: FeaturesConfig
     cost: CostConfig
     threshold: ThresholdConfig
-    promotion: PromotionConfig
     drift: DriftConfig
-    monitoring: MonitoringConfig
 
     @model_validator(mode="after")
     def no_leak_into_features(self) -> Self:
@@ -163,9 +131,6 @@ class Params(StrictModel):
         for col in (self.target, self.id_col):
             if col in features:
                 raise ValueError(f"{col} must not be a feature")
-        unknown = [c for c in self.monitoring.key_features if c not in features]
-        if unknown:
-            raise ValueError(f"monitoring.key_features not model features: {unknown}")
         return self
 
 
