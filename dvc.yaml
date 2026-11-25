@@ -48,32 +48,6 @@ stages:
     outs:
       - data/processed/features.parquet
 
-  # Promotion batch (for Areej's review): data.holdout_size labelled raw rows
-  # NOT in features.parquet, processed like featurize. Never read by train,
-  # evaluate or the drift simulator.
-  holdout:
-    cmd: python -m crediscore.data.holdout
-    deps:
-      - src/crediscore/data/holdout.py
-      - src/crediscore/data/featurize.py
-      - src/crediscore/data/sampling.py
-      - src/crediscore/data/schema.py
-      - src/crediscore/config.py
-      - data/raw/application_train.csv
-      - data/processed/features.parquet
-    params:
-      - data.raw_path
-      - data.processed_dir
-      - data.holdout_size
-      - data.random_state
-      - data.missing_threshold
-      - id_col
-      - target
-      - sensitive_cols
-      - features
-    outs:
-      - data/processed/holdout.parquet
-
   split:
     cmd: python -m crediscore.data.split
     deps:
@@ -128,7 +102,6 @@ stages:
     cmd: python -m crediscore.models.evaluate --model models
     deps:
       - src/crediscore/models/evaluate.py
-      - src/crediscore/fairness/audit.py
       - src/crediscore/models/train.py
       - src/crediscore/models/pipeline.py
       - src/crediscore/models/split.py
@@ -148,8 +121,6 @@ stages:
       - cost
       - threshold.min_recall
       - threshold.max_review_share
-      - promotion.max_gender_gap_pts
-      - promotion.age_gap_margin_pts
     metrics:
       # Small JSON, versioned in Git (not in the DVC cache).
       - reports/metrics.json:

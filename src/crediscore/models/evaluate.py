@@ -16,11 +16,9 @@ parquet, applies the same `decide` to both on test and writes
   with companions next to it: thin good-payer acceptance rate and default
   rate among accepted thin files, vs the baseline ("sans augmenter les
   pertes"); the whole-portfolio ratio is informative only;
-- fairness (D5, only ACCEPTE counts as accepted, D8, from
-  `crediscore.fairness.audit`): gender (XNA excluded) and age band raw and
-  equal-opportunity gaps, and the D5 status with the `params.promotion`
-  tolerances: gender both gaps <= 10 pts; age equal-opportunity gap <=
-  baseline's + 2 pts;
+- fairness (D5, only ACCEPTE counts as accepted, D8): gender (XNA excluded)
+  and age band raw and equal-opportunity gaps, and the D5 status: gender
+  both gaps <= 10 pts; age equal-opportunity gap <= baseline's + 2 pts;
 - every SYNOPSIS target with its measured value, met or missed, and the gap.
 
 If MLFLOW_TRACKING_URI is set, the numbers are also logged as an `evaluate`
@@ -48,15 +46,18 @@ import mlflow.sklearn
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-from mlflow.entities.model_registry import ModelVersion
 from sklearn.metrics import roc_auc_score
 
-from crediscore.config import Params, PromotionConfig, load_params
-from crediscore.fairness.audit import audit, d5_checks
+from crediscore.config import Params, load_params
 from crediscore.models.cost import ACCEPT, REFUSE, business_cost
 from crediscore.models.threshold import NEVER, decide, zone_metrics
 from crediscore.models.train import EXPERIMENT, prepare_xy, score_metrics, train
 
+# D5 (decided 2026-10-25). ponytail: constants until lot 4 adds params `promotion.*`.
+GENDER_COL, GENDER_EXCLUDED = "CODE_GENDER", "XNA"
+GENDER_MAX_GAP_PTS = 10.0
+AGE_COL, AGE_TOLERANCE_PTS = "AGE_YEARS", 2.0
+AGE_BINS, AGE_LABELS = [0.0, 30.0, 50.0, np.inf], ["<30", "30-50", "≥50"]
 # SYNOPSIS targets (validated by the teacher); recall comes from params (D8).
 TARGETS: dict[str, tuple[str, float]] = {
     "roc_auc": (">=", 0.75),
@@ -67,23 +68,31 @@ TARGETS: dict[str, tuple[str, float]] = {
 _OPS = {">=": operator.ge, "<=": operator.le}
 
 
-# The metrics.json fields of each grouping (the audit also has recall rates).
-FAIRNESS_KEYS = (
-    "raw_gap_pts",
-    "eo_gap_pts",
-    "acceptance_by_group",
-    "acceptance_good_payers_by_group",
-    "excluded_rows",
-)
+def _gap(rates: pd.Series) -> float:
+    """Max - min of the group rates, in points (0 with fewer than 2 groups)."""
+    return float(100 * (rates.max() - rates.min())) if len(rates) > 1 else 0.0
+
+
+def _group_gaps(
+    accepted: pd.Series, good: pd.Series, groups: pd.Series
+) -> dict[str, Any]:
+    keep = groups.notna()
+    acc, ok, grp = accepted[keep], good[keep], groups[keep]
+    raw = acc.groupby(grp, observed=True).mean()
+    eo = acc[ok].groupby(grp[ok], observed=True).mean()
+    return {
+        "raw_gap_pts": _gap(raw),
+        "eo_gap_pts": _gap(eo),
+        "acceptance_by_group": {str(k): float(v) for k, v in raw.items()},
+        "acceptance_good_payers_by_group": {str(k): float(v) for k, v in eo.items()},
+        "excluded_rows": int((~keep).sum()),
+    }
 
 
 def fairness(
     df: pd.DataFrame, decisions: npt.ArrayLike, *, target: str
 ) -> dict[str, Any]:
     """Gender and age-band acceptance gaps, raw and equal opportunity (D5).
-
-    Computed by `crediscore.fairness.audit.audit`, restricted to
-    `FAIRNESS_KEYS` (the published metrics.json fields).
 
     Args:
         df: Test rows with CODE_GENDER, AGE_YEARS and the target.
@@ -94,8 +103,15 @@ def fairness(
         {"gender": ..., "age": ...}, each with raw_gap_pts, eo_gap_pts, the
         per-group rates and the number of rows left out (XNA, missing age).
     """
-    full = audit(df, decisions, target=target)
-    return {side: {k: full[side][k] for k in FAIRNESS_KEYS} for side in full}
+    idx = df.index
+    accepted = pd.Series(np.asarray(decisions) == ACCEPT, index=idx)
+    good = pd.Series(df[target].to_numpy() == 0, index=idx)
+    gender = df[GENDER_COL].where(df[GENDER_COL] != GENDER_EXCLUDED)
+    age = pd.cut(df[AGE_COL], AGE_BINS, right=False, labels=AGE_LABELS)
+    return {
+        "gender": _group_gaps(accepted, good, gender),
+        "age": _group_gaps(accepted, good, age),
+    }
 
 
 def thin_file(
@@ -178,34 +194,29 @@ def report(
 
 
 def d5_status(
-    model_fair: dict[str, Any],
-    baseline_fair: dict[str, Any],
-    promotion: PromotionConfig,
+    model_fair: dict[str, Any], baseline_fair: dict[str, Any]
 ) -> dict[str, Any]:
-    """D5: gender gaps <= the limit (both); age EO gap <= baseline's + margin.
+    """D5: gender gaps <= 10 pts (both); age EO gap <= baseline's + 2 pts.
 
     Args:
         model_fair: `fairness` output of the evaluated model.
         baseline_fair: `fairness` output of the baseline on the same test rows.
-        promotion: The gate tolerances (`params.promotion`).
 
     Returns:
-        gender_pass, age_pass, pass and the limits used (bounds inclusive).
+        gender_pass, age_pass, pass and the age limit used (bounds inclusive).
     """
-    c = d5_checks(
-        model_fair,
-        age_anchor_pts=baseline_fair["age"]["eo_gap_pts"],
-        max_gender_gap_pts=promotion.max_gender_gap_pts,
-        age_gap_margin_pts=promotion.age_gap_margin_pts,
+    g = model_fair["gender"]
+    limit = baseline_fair["age"]["eo_gap_pts"] + AGE_TOLERANCE_PTS
+    gender_ok = bool(
+        g["raw_gap_pts"] <= GENDER_MAX_GAP_PTS and g["eo_gap_pts"] <= GENDER_MAX_GAP_PTS
     )
-    gender_ok = c["gender_raw_gap"]["pass"] and c["gender_eo_gap"]["pass"]
-    age_ok = c["age_eo_gap"]["pass"]
+    age_ok = bool(model_fair["age"]["eo_gap_pts"] <= limit)
     return {
         "gender_pass": gender_ok,
         "age_pass": age_ok,
         "pass": gender_ok and age_ok,
-        "gender_max_gap_pts": promotion.max_gender_gap_pts,
-        "age_eo_limit_pts": c["age_eo_gap"]["limit"],
+        "gender_max_gap_pts": GENDER_MAX_GAP_PTS,
+        "age_eo_limit_pts": limit,
     }
 
 
@@ -229,7 +240,7 @@ def kpis(
             model["cost_per_file"] - model["accept_all_cost_per_file"]
         )
         / model["accept_all_cost_per_file"],
-        "d5": d5_status(model["fairness"], baseline["fairness"], params.promotion),
+        "d5": d5_status(model["fairness"], baseline["fairness"]),
         "targets": {
             **{
                 k: {
@@ -277,21 +288,17 @@ def thin_target(model: dict[str, Any], baseline: dict[str, Any]) -> dict[str, An
     }
 
 
-def registry_version(ref: str) -> ModelVersion:
-    """The model version of `models:/<name>@<alias>` or `models:/<name>/<n>`."""
-    name, _, alias = ref.removeprefix("models:/").partition("@")
-    client = mlflow.MlflowClient()
-    if alias:
-        return client.get_model_version_by_alias(name, alias)
-    name, _, number = name.partition("/")
-    return client.get_model_version(name, number)
-
-
 def load_model(ref: str) -> tuple[Any, dict[str, float]]:
     """Model and its thresholds.json, from a `train` directory or `models:/`."""
     if ref.startswith("models:/"):
         model = mlflow.sklearn.load_model(ref)
-        version = registry_version(ref)
+        name, _, alias = ref.removeprefix("models:/").partition("@")
+        client = mlflow.MlflowClient()
+        if alias:
+            version = client.get_model_version_by_alias(name, alias)
+        else:
+            name, _, number = name.partition("/")
+            version = client.get_model_version(name, number)
         th = mlflow.artifacts.load_dict(f"runs:/{version.run_id}/thresholds.json")
         return model, th
     path = Path(ref)

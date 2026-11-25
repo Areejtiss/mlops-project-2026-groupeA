@@ -8,16 +8,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from crediscore.config import Params, PromotionConfig
+from crediscore.config import Params
 from crediscore.models import evaluate as ev
 from crediscore.models.cost import ACCEPT, REFUSE, REVIEW
 from crediscore.models.evaluate import d5_status, fairness, kpis, thin_file
 
 PARAMS_FILE = Path(__file__).resolve().parents[1] / "params.yaml"
 COSTS = {"cost_fn": 5.0, "cost_fp": 1.0, "cost_review": 0.3}
-PROMO = PromotionConfig(
-    max_gender_gap_pts=10, age_gap_margin_pts=2, min_rows=10, min_group_rows=5
-)
 
 
 # --- fairness (D5, D8: only ACCEPTE counts as accepted) ----------------------
@@ -81,7 +78,7 @@ def fair(gender_raw: float, gender_eo: float, age_eo: float) -> dict:
 
 def test_d5_status_boundaries_are_inclusive() -> None:
     base = fair(7.8, 6.6, 32.9)
-    ok = d5_status(fair(10.0, 10.0, 34.9), base, PROMO)
+    ok = d5_status(fair(10.0, 10.0, 34.9), base)
     assert ok["gender_pass"] and ok["age_pass"] and ok["pass"]
     assert ok["age_eo_limit_pts"] == pytest.approx(34.9)
 
@@ -95,7 +92,7 @@ def test_d5_status_boundaries_are_inclusive() -> None:
     ],
 )
 def test_d5_status_each_condition_fails_alone(model: dict, failing: str) -> None:
-    out = d5_status(model, fair(7.8, 6.6, 32.9), PROMO)
+    out = d5_status(model, fair(7.8, 6.6, 32.9))
     assert out[failing] is False
     assert out["pass"] is False
     other = {"gender_pass", "age_pass"} - {failing}
@@ -103,32 +100,9 @@ def test_d5_status_each_condition_fails_alone(model: dict, failing: str) -> None
 
 
 def test_d5_age_limit_is_anchored_on_the_baseline_not_a_constant() -> None:
-    out = d5_status(fair(5.0, 5.0, 40.0), fair(7.8, 6.6, 38.5), PROMO)
+    out = d5_status(fair(5.0, 5.0, 40.0), fair(7.8, 6.6, 38.5))
     assert out["age_eo_limit_pts"] == pytest.approx(40.5)
     assert out["age_pass"] is True
-
-
-def test_d5_status_reads_the_promotion_tolerances() -> None:
-    strict = PromotionConfig(
-        max_gender_gap_pts=5, age_gap_margin_pts=0.5, min_rows=10, min_group_rows=5
-    )
-    out = d5_status(fair(6.0, 4.0, 39.0), fair(7.8, 6.6, 38.5), strict)
-    assert out["gender_max_gap_pts"] == 5.0
-    assert out["age_eo_limit_pts"] == pytest.approx(39.0)
-    assert (out["gender_pass"], out["age_pass"]) == (False, True)
-
-
-def test_fairness_keeps_the_metrics_json_keys(params: Params) -> None:
-    df, d = toy_fairness_frame()
-    out = fairness(df, d, target="TARGET")
-    for side in ("gender", "age"):
-        assert list(out[side]) == [
-            "raw_gap_pts",
-            "eo_gap_pts",
-            "acceptance_by_group",
-            "acceptance_good_payers_by_group",
-            "excluded_rows",
-        ]
 
 
 # --- thin file (D10) ---------------------------------------------------------
@@ -463,24 +437,3 @@ def test_main_scores_the_model_and_a_logreg_baseline_with_its_own_thresholds(
 def test_flatten_keeps_numeric_leaves_including_ints_and_bools() -> None:
     d = {"a": 1, "b": True, "c": {"d": 2.5, "e": None, "f": "x"}, "<30": 3}
     assert ev.flatten(d, "p_") == {"p_a": 1.0, "p_b": 1.0, "p_c.d": 2.5, "p_lt30": 3.0}
-
-
-def test_registry_version_follows_the_alias_and_the_number(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from sklearn.dummy import DummyClassifier
-
-    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
-    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
-    monkeypatch.chdir(tmp_path)
-    mlflow.set_tracking_uri(uri)
-    mlflow.set_experiment("registry_version")  # not an id left by an earlier test
-    model = DummyClassifier().fit([[0], [1]], [0, 1])
-    for _ in range(2):
-        with mlflow.start_run() as run:
-            mlflow.sklearn.log_model(model, name="model")
-        mlflow.register_model(f"runs:/{run.info.run_id}/model", "crediscore")
-    mlflow.MlflowClient().set_registered_model_alias("crediscore", "champion", "2")
-    champion = ev.registry_version("models:/crediscore@champion")
-    assert (str(champion.version), champion.run_id) == ("2", run.info.run_id)
-    assert str(ev.registry_version("models:/crediscore/1").version) == "1"

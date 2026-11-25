@@ -32,7 +32,6 @@ class DataConfig(StrictModel):
     random_state: int = Field(ge=0)
     missing_threshold: float = Field(gt=0, lt=1)
     ci_sample_size: int = Field(gt=0)
-    holdout_size: int = Field(gt=0)
 
     @model_validator(mode="after")
     def ci_sample_smaller_than_sample(self) -> Self:
@@ -95,21 +94,6 @@ class ThresholdConfig(StrictModel):
         return self
 
 
-class PromotionConfig(StrictModel):
-    """Promotion gate (D5): gap tolerances in points, minimum batch sizes."""
-
-    max_gender_gap_pts: float = Field(ge=0, le=100)
-    age_gap_margin_pts: float = Field(ge=0, le=100)
-    min_rows: int = Field(gt=0)
-    min_group_rows: int = Field(gt=0)
-
-    @model_validator(mode="after")
-    def two_groups_fit_in_the_batch(self) -> Self:
-        if self.min_rows < 2 * self.min_group_rows:
-            raise ValueError("min_rows must be at least twice min_group_rows")
-        return self
-
-
 class EconomicCrisisConfig(StrictModel):
     """Intensity of the "economic crisis" drift scenario (multiplicative factors)."""
 
@@ -136,7 +120,6 @@ class Params(StrictModel):
     features: FeaturesConfig
     cost: CostConfig
     threshold: ThresholdConfig
-    promotion: PromotionConfig
     drift: DriftConfig
 
     @model_validator(mode="after")
