@@ -7,7 +7,9 @@ Selection (validation only, the test split is never read here):
   `--params`, whose thresholds meet the D3/D8 constraints (recall >=
   min_recall, review share <= max_review_share);
 - keep those with validation ROC-AUC >= 0.75 if any reaches it;
-- the best is the lowest validation cost per file, ties broken by ROC-AUC.
+- the best is the lowest validation cost per file, ties broken by ROC-AUC,
+  then in favour of the champion's run (a retrain on unchanged data ties
+  with it exactly).
 A winner tagged `experiment` (e.g. the D5 `no_age` run), or trained with
 `excluded_features`, is a measurement: registration aborts unless
 `--allow-experiment` is passed.
@@ -82,6 +84,8 @@ def select_run(
     candidates: list[dict[str, Any]],
     config: dict[str, float],
     min_auc: float = MIN_AUC,
+    *,
+    prefer: str | None = None,
 ) -> dict[str, Any]:
     """Pick the run to register (L3-1).
 
@@ -92,6 +96,9 @@ def select_run(
         config: `run_config(params)`: runs logged with other values (costs,
             constraints, val_size) are not comparable and are left out.
         min_auc: AUC floor, applied only if at least one feasible run reaches it.
+        prefer: Run id kept on a full tie (same cost and AUC), e.g. the
+            champion's run: a retrain on unchanged data then selects the
+            champion and `main` exits 3 instead of re-promoting a copy.
 
     Returns:
         The chosen candidate.
@@ -113,7 +120,10 @@ def select_run(
             "review constraints"
         )
     pool = [c for c in feasible if c["roc_auc"] >= min_auc] or feasible
-    return min(pool, key=lambda c: (c["cost_per_file"], -c["roc_auc"]))
+    return min(
+        pool,
+        key=lambda c: (c["cost_per_file"], -c["roc_auc"], c["run_id"] != prefer),
+    )
 
 
 def candidate(run: Run) -> dict[str, Any]:
@@ -219,7 +229,11 @@ def main(argv: list[str] | None = None) -> None:
                 f"review {c['review_share']:.3f}"
             )
         try:
-            best = select_run(cands, run_config(load_params(args.params)))
+            best = select_run(
+                cands,
+                run_config(load_params(args.params)),
+                prefer=champion_run_id(client),
+            )
         except ValueError as err:
             raise SystemExit(str(err)) from err
         print(f"selected {best['run_name']} {best['run_id']}")
