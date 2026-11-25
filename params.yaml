@@ -111,3 +111,20 @@ drift:
     credit_factor: 1.25     # loans (credit and annuity) grow by 25%
     employment_factor: 0.7  # employment seniority shrinks by 30% (job losses)
     noise_std: 0.05         # relative gaussian noise on the shifted columns
+
+# Drift DETECTION (monitoring/drift.py, Achraf): alert thresholds of the drift
+# report (contract 4). Separate from `drift:` above, which configures the simulator.
+monitoring:
+  alpha: 0.05               # a feature drifts when its KS / chi2 p-value < alpha
+  drift_share_alert: 0.30   # alert when >= 30% of the model features drift
+  psi_alert: 0.20           # alert when the PSI of one key feature is >= 0.20
+  auc_drop_alert: 0.03      # alert when reference AUC - current AUC > 0.03
+  psi_bins: 10              # quantile bins of the reference for the PSI
+  min_rows: 500             # smaller batches: drift_share and PSI do not raise the alert
+  min_labelled: 1000        # fewer labelled rows in a batch: auc_drop is null
+  min_positives: 50         # fewer defaults in a labelled batch: auc_drop is null
+  key_features:             # features whose PSI alone can raise the alert
+    - AMT_INCOME_TOTAL
+    - AMT_CREDIT
+    - ANNUITY_INCOME_RATIO
+    - EXT_SOURCE_2

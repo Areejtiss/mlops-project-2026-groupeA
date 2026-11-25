@@ -223,3 +223,57 @@ def test_two_gender_groups_must_fit_in_the_minimum_batch(tmp_path: Path) -> None
         tmp_path, {"promotion": {"min_rows": 1000, "min_group_rows": 500}}
     )
     assert load_params(ok).promotion.min_rows == 1000
+
+
+def test_monitoring_params_are_loaded() -> None:
+    monitoring = load_params(PARAMS_FILE).monitoring
+    assert monitoring.drift_share_alert == 0.30
+    assert monitoring.psi_alert == 0.20
+    assert monitoring.auc_drop_alert == 0.03
+    assert monitoring.alpha == 0.05
+    assert monitoring.psi_bins == 10
+    assert monitoring.min_rows == 500
+    assert monitoring.min_labelled == 1000
+    assert monitoring.min_positives == 50
+    assert monitoring.key_features == [
+        "AMT_INCOME_TOTAL",
+        "AMT_CREDIT",
+        "ANNUITY_INCOME_RATIO",
+        "EXT_SOURCE_2",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("drift_share_alert", 0),
+        ("drift_share_alert", 1.1),
+        ("psi_alert", 0),
+        ("auc_drop_alert", -0.01),
+        ("auc_drop_alert", 1),
+        ("alpha", 0),
+        ("alpha", 1),
+        ("psi_bins", 1),
+        ("min_rows", 1),
+        ("min_labelled", 1),
+        ("min_positives", 0),
+    ],
+)
+def test_invalid_monitoring_key_is_rejected(
+    tmp_path: Path, key: str, value: float
+) -> None:
+    path = write_params(tmp_path, {"monitoring": {key: value}})
+    with pytest.raises(ValidationError, match=rf"{key}\n.*(greater|less) than"):
+        load_params(path)
+
+
+def test_monitoring_key_feature_must_be_a_feature(tmp_path: Path) -> None:
+    path = write_params(tmp_path, {"monitoring": {"key_features": ["CODE_GENDER"]}})
+    with pytest.raises(ValidationError, match=r"not model features: \['CODE_GENDER'\]"):
+        load_params(path)
+
+
+def test_monitoring_needs_a_key_feature(tmp_path: Path) -> None:
+    path = write_params(tmp_path, {"monitoring": {"key_features": []}})
+    with pytest.raises(ValidationError, match=r"key_features\n.*at least 1 item"):
+        load_params(path)
