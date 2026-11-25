@@ -1,0 +1,40 @@
+﻿
+name: CI
+
+on:
+  push:
+    branches: ["main", "dev", "feat/**"]
+  pull_request:
+    branches: ["main", "dev"]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: poetry
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install dependencies
+        run: poetry install --with dev
+
+      - name: Check formatting
+        run: poetry run black --check src tests
+
+      - name: Lint
+        run: poetry run flake8 src tests
+
+      - name: Type check
+        run: poetry run mypy
+
+      - name: Run tests with coverage
+        run: poetry run pytest --cov=crediscore --cov-report=term-missing
