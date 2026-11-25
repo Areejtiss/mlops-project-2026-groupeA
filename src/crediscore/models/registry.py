@@ -12,14 +12,22 @@ A winner tagged `experiment` (e.g. the D5 `no_age` run), or trained with
 `excluded_features`, is a measurement: registration aborts unless
 `--allow-experiment` is passed.
 
-Registration: the run's logged model becomes a new version of `crediscore`.
-Alias `champion` if none exists yet, otherwise `challenger` (promotion is
-lot 4). The thresholds (full precision), `shap_unit`, `model_type` and data
-hashes are copied from the run to model-version tags (contract 2 section 7).
+Registration: the run's logged model becomes a new version of `crediscore`,
+always with alias `challenger`, even the first model ever: `promote` gates it
+(fairness only while no champion exists), so its exit 0 always means "deploy".
+If `--select` picks the run already behind `@champion`, nothing is registered
+and the exit code is 3 ("nothing to do, no deploy"): a persistent drift on
+unchanged data cannot re-promote the same model forever. The thresholds
+(full precision), `shap_unit`, `model_type` and data hashes are copied from the
+run to model-version tags (contract 2 section 7).
 
 Usage:
     poetry run python -m crediscore.models.registry --select
     poetry run python -m crediscore.models.registry --run-id <run id>
+
+Exit codes: 0 = a version was registered as @challenger; 3 = `--select` chose
+the champion's run, nothing registered; 1 = no candidate, or an experiment
+winner without `--allow-experiment`.
 """
 
 import argparse
@@ -34,6 +42,8 @@ from crediscore.config import Params, load_params
 from crediscore.models.train import EXPERIMENT, file_md5
 
 MODEL_NAME = "crediscore"
+# registry --select: the selected run is already @champion, nothing to do.
+EXIT_ALREADY_CHAMPION = 3
 # SYNOPSIS ROC-AUC target, used as the selection floor (L3-1).
 MIN_AUC = 0.75
 REQUIRED_TAGS = (
@@ -149,7 +159,7 @@ def training_runs(client: MlflowClient, train_data_hash: str) -> list[Run]:
 def register(
     client: MlflowClient, run_id: str, name: str = MODEL_NAME
 ) -> tuple[str, str]:
-    """Register the run's logged model, copy its tags, set the alias.
+    """Register the run's logged model, copy its tags, set `@challenger`.
 
     Args:
         client: MLflow client of the tracking server.
@@ -157,8 +167,8 @@ def register(
         name: Registered model name.
 
     Returns:
-        (version, alias): alias `champion` if the model had none, else
-        `challenger`.
+        (version, "challenger"): always the challenger, even for the first
+        model; only `promote` sets `@champion`.
 
     Raises:
         ValueError: If the run lacks a tag of `REQUIRED_TAGS`.
@@ -167,17 +177,21 @@ def register(
     missing = [k for k in REQUIRED_TAGS if k not in tags]
     if missing:
         raise ValueError(f"run {run_id} lacks the tags {missing}")
-    try:
-        aliases = client.get_registered_model(name).aliases
-    except mlflow.exceptions.MlflowException:
-        aliases = {}
-    alias = "challenger" if "champion" in aliases else "champion"
+    alias = "challenger"
     version = str(mlflow.register_model(f"runs:/{run_id}/model", name).version)
     for key in VERSION_TAGS:
         if key in tags:
             client.set_model_version_tag(name, version, key, tags[key])
     client.set_registered_model_alias(name, alias, version)
     return version, alias
+
+
+def champion_run_id(client: MlflowClient, name: str = MODEL_NAME) -> str | None:
+    """Run id behind `@champion`, None if there is no champion yet."""
+    try:
+        return str(client.get_model_version_by_alias(name, "champion").run_id)
+    except mlflow.exceptions.MlflowException:
+        return None
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -215,6 +229,9 @@ def main(argv: list[str] | None = None) -> None:
                 "registered (pass --allow-experiment to register it anyway)"
             )
         run_id = best["run_id"]
+        if run_id == champion_run_id(client):
+            print("nothing to register: selected run is already champion")
+            raise SystemExit(EXIT_ALREADY_CHAMPION)
     version, alias = register(client, run_id)
     print(f"registered {MODEL_NAME} version {version} as @{alias}")
 

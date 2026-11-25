@@ -221,7 +221,7 @@ def test_main_select_exits_3_when_the_selected_run_is_already_champion(
     assert "nothing to register: selected run is already champion" in (
         capsys.readouterr().out
     )
-    assert [v.version for v in client.search_model_versions()] == ["1"]
+    assert [str(v.version) for v in client.search_model_versions()] == ["1"]
     assert aliases() == {"champion": "1"}
 
 

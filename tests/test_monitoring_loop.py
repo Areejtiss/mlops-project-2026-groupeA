@@ -54,9 +54,12 @@ def test_drift_alert_retrain_registry_promote_moves_the_aliases(
     train.main([*p, "--train", "train_v1.parquet", "--output-dir", "m1"])
     registry.main([*p, "--select", "--train", "train_v1.parquet"])
     assert aliases() == {"challenger": "1"}
+    # The age anchor is measured on the promotion batch itself: on 1 500-row
+    # synthetic sets, test and hold-out age gaps differ by a few points of
+    # sampling noise alone.
     evaluate.main(
         [*p, "--model", "m1", "--train", "train_v1.parquet"]
-        + ["--test", "test.parquet", "--output", "metrics.json"]
+        + ["--test", "holdout.parquet", "--output", "metrics.json"]
     )
     promo = [*p, "--data", "holdout.parquet", "--metrics", "metrics.json"]
     assert promote.main([*promo, "--output", "promotion0.json"]) == 0
@@ -86,17 +89,20 @@ def test_drift_alert_retrain_registry_promote_moves_the_aliases(
     registry.main([*p, "--select", "--train", "train_v2.parquet"])
     assert aliases() == {"champion": "1", "challenger": "2"}
 
-    # 4a. promote on the fresh hold-out batch. The challenger is better on AUC
-    # and cost, but learned the synthetic age signal more strongly: the D5
-    # age gate fails, exit 1 = keep the current model, nothing changed.
+    # 4a. promote on the fresh hold-out batch, with a test-only age margin of
+    # 0: the challenger is better on AUC and cost, but learned the synthetic
+    # age signal more strongly, so the D5 age gate fails; exit 1 = keep the
+    # current model, nothing changed.
+    raw["promotion"]["age_gap_margin_pts"] = 0
+    Path("params.yaml").write_text(yaml.safe_dump(raw), encoding="utf-8")
     assert promote.main([*promo, "--output", "blocked.json"]) == 1
     blocked = json.loads(Path("blocked.json").read_text(encoding="utf-8"))
     assert blocked["failed"] == ["age_eo_gap"]
     assert aliases() == {"champion": "1", "challenger": "2"}
 
-    # 4b. Same chain with a wider age margin (test-only params): exit 0 =
-    # promoted, the aliases move (the gate itself is tested in test_promote).
-    raw["promotion"]["age_gap_margin_pts"] = 10
+    # 4b. Same chain with the real margin of params.yaml (2 pts): exit 0 =
+    # promoted, the aliases move.
+    raw["promotion"]["age_gap_margin_pts"] = 2
     Path("params.yaml").write_text(yaml.safe_dump(raw), encoding="utf-8")
     assert promote.main([*promo, "--output", "promotion.json"]) == 0
     decision = json.loads(Path("promotion.json").read_text(encoding="utf-8"))
