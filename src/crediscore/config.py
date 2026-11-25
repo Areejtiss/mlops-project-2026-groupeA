@@ -28,6 +28,7 @@ class DataConfig(StrictModel):
     processed_dir: Path
     sample_size: int = Field(gt=0)
     test_size: float = Field(gt=0, lt=1)
+    val_size: float = Field(gt=0, lt=1)
     random_state: int = Field(ge=0)
     missing_threshold: float = Field(gt=0, lt=1)
     ci_sample_size: int = Field(gt=0)
@@ -69,18 +70,27 @@ class CostConfig(StrictModel):
 
     cost_fn: float = Field(gt=0)
     cost_fp: float = Field(gt=0)
+    cost_review: float = Field(gt=0)
 
 
 class ThresholdConfig(StrictModel):
-    """Probability thresholds of the 3 decision zones (None until tuned)."""
+    """Constraints of the threshold search, plus an optional manual override.
+
+    The thresholds are a training output that travels with the model version
+    (D9). `low`/`high` stay None unless someone forces them by hand.
+    """
 
     low: float | None = Field(default=None, ge=0, le=1)
     high: float | None = Field(default=None, ge=0, le=1)
+    max_review_share: float = Field(ge=0, le=1)
+    min_recall: float = Field(ge=0, le=1)
 
     @model_validator(mode="after")
-    def low_below_high(self) -> Self:
-        if self.low is not None and self.high is not None and self.low >= self.high:
-            raise ValueError("threshold.low must be smaller than threshold.high")
+    def low_not_above_high(self) -> Self:
+        if self.low is not None and self.high is not None and self.low > self.high:
+            raise ValueError(
+                "threshold.low must be <= threshold.high (equal = 2 zones)"
+            )
         return self
 
 

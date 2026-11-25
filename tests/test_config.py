@@ -92,13 +92,50 @@ def test_unknown_key_is_rejected(tmp_path: Path) -> None:
 
 def test_thresholds_must_be_ordered(tmp_path: Path) -> None:
     path = write_params(tmp_path, {"threshold": {"low": 0.6, "high": 0.3}})
-    with pytest.raises(ValidationError, match="low must be smaller"):
+    with pytest.raises(ValidationError, match="low must be <= "):
         load_params(path)
+
+
+def test_equal_thresholds_are_allowed(tmp_path: Path) -> None:
+    # low == high = 2 zones, no review (contract 2 section 5).
+    path = write_params(tmp_path, {"threshold": {"low": 0.2, "high": 0.2}})
+    params = load_params(path)
+    assert params.threshold.low == params.threshold.high == 0.2
 
 
 def test_ci_sample_must_be_smaller_than_sample(tmp_path: Path) -> None:
     path = write_params(tmp_path, {"data": {"ci_sample_size": 200_000}})
     with pytest.raises(ValidationError, match="ci_sample_size"):
+        load_params(path)
+
+
+def test_lot2_keys_are_loaded() -> None:
+    params = load_params(PARAMS_FILE)
+    assert params.data.val_size == 0.2
+    assert params.cost.cost_review == 0.3
+    assert params.threshold.max_review_share == 0.15
+    assert params.threshold.min_recall == 0.65
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value"),
+    [
+        ("data", "val_size", 0),
+        ("data", "val_size", 1),
+        ("cost", "cost_review", 0),
+        ("cost", "cost_review", -0.3),
+        ("threshold", "max_review_share", -0.1),
+        ("threshold", "max_review_share", 1.5),
+        ("threshold", "min_recall", -0.1),
+        ("threshold", "min_recall", 1.5),
+    ],
+)
+def test_invalid_lot2_key_is_rejected(
+    tmp_path: Path, section: str, key: str, value: float
+) -> None:
+    path = write_params(tmp_path, {section: {key: value}})
+    # Match the bound message, not just the key (an unknown key also names it).
+    with pytest.raises(ValidationError, match=rf"{key}\n.*(greater|less) than"):
         load_params(path)
 
 

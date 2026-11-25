@@ -6,7 +6,13 @@
 
 - **Base read:** branch `dev` = `main` = `0de3860` (2026-10-11); `origin/feat/iyed-serving-cicd` = `91e5e1b` (2026-10-24, CI only, not merged).
 - **Owner:** Achraf Gharbi. **Written:** 2026-10-24.
-- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2).
+- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2), age rule anchored to the baseline the same day. Lot 2 implemented 2026-10-25 (see "Lot 2 progress"); `dvc.yaml` train stage deferred until Areej's pipeline exists.
+- **Integration with `dev` (2026-11-24).** The three branches are rebased onto `origin/dev` = `3ed70dc` (Areej's PR #2, DVC pipeline, and PR #3, drift simulator). Consequences:
+  - **D2:** Areej's `crediscore.data.featurize` (`fix_days_employed` then `add_derived_features`) is THE shared function; our `data/features.py` is removed. Its float64 cast of the raw inputs (one-row requests with `None`) is ported into her file, in a commit for her review.
+  - **D10:** her merged thin-file definition is adopted (at least 2 of 3 `EXT_SOURCE` missing, or `AMT_REQ_CREDIT_BUREAU_YEAR` NaN or 0): 39.7 % of the real train split, against 11.9 % for our old stand-in.
+  - **D6:** PRs target `dev` (team practice).
+  - Real data: `dvc repro split` produces `data/processed/train.parquet` / `test.parquet` (80 000 / 20 000 rows, every `params.features.all` column); our throwaway prep is gone. Our model-split tests are now `tests/test_model_split.py` (Areej's `tests/test_split.py` tests her split stage).
+  - Commit SHAs quoted below predate the rebase (e.g. `af69614` is now `8e4041c`).
 
 ---
 
@@ -24,7 +30,7 @@
 | The cost is a flat 5:1 ratio | `params.yaml:80-82` |
 | Thresholds are `null`. The comment uses a third label spelling, `A ETUDIER` | `params.yaml:84-88` |
 | Only `CODE_GENDER` is sensitive. Age bands come from `AGE_YEARS`, which is also a model feature | `params.yaml:19-20, 61` |
-| Only `application_train` is downloaded (no `bureau.csv`), so thin-file is defined from `EXT_SOURCE` only | `download.py:22` |
+| Only `application_train` is downloaded (no `bureau.csv`), so thin-file is defined from `EXT_SOURCE` only (2026-11-24: Areej's definition also uses `AMT_REQ_CREDIT_BUREAU_YEAR`, D10) | `download.py:22` |
 | **This machine:** no Python, no Poetry, no `.venv`, Docker daemon stopped, no `.env`, no data | checked 2026-10-24 |
 | `git config user.email` = `achraf.gharbi@mafrah.com`; SYNOPSIS lists `gharbiachraf6@gmail.com` | `SYNOPSIS.md:11` |
 
@@ -59,10 +65,10 @@ Contract 2 must state:
 
 ## 2. Decisions — recommendation first
 
-> **Decided 2026-10-24 (Achraf):** the recommended option is adopted for D1, D2, D3, D4, D5, D6, D8, D9, D10. D3 values: `cost_review = 0.3`, `max_review_share = 0.15`; D8 adds `min_recall = 0.65`. Team-facing summary and actions per member: `docs/decisions/2026-10-24-decisions-modelisation.md` (to paste in the PR description). Decisions marked "Team" stay open to objection from Areej and Iyed until the PR is approved.
+> **Decided 2026-10-24 (Achraf):** the recommended option is adopted for D1, D2, D3, D4, D6, D8, D9, D10. D3 values: `cost_review = 0.3`, `max_review_share = 0.15`; D8 adds `min_recall = 0.65`. Team-facing summary and actions per member: `docs/decisions/2026-10-24-decisions-modelisation.md` (to paste in the PR description). Decisions marked "Team" stay open to objection from Areej and Iyed until the PR is approved.
 > **D5 decided 2026-10-25 (human), replacing "a then b":**
 > - **Gender: absolute gate.** The acceptance-rate gap (`ACCEPTE` only) between F and M, `XNA` excluded, must be ≤ 10 pts, and the equal-opportunity gap must also be ≤ 10 pts. Baseline: 7.8 / 6.6 pts.
-> - **Age bands (<30, 30–50, ≥50): no absolute gate.** Non-regression rule: the challenger's age equal-opportunity gap ≤ the champion's + 2 pts. Both age gaps are published at every evaluation and tracked over time (lot 6).
+> - **Age bands (<30, 30–50, ≥50): no absolute gate.** Non-regression rule **anchored to the baseline** (refined 2026-10-25, human-approved): the challenger's age equal-opportunity gap ≤ the **baseline's** gap + 2 pts, i.e. ≤ 34.9 pts. The anchor is the LogReg baseline recomputed by `evaluate` in lot 3 on the same test split; until then 32.9 pts (lot 1). It is fixed, applies to the first promotion too (no champion needed), and cannot creep 2 pts at every promotion as "≤ champion + 2" would. Both age gaps are published at every evaluation and tracked over time (lot 6).
 > - **Why (for the report):** age is a real risk driver in this data (the <30 band defaults about 2× the ≥50 band: 11.4 % vs 5.7 %) and a model feature. The baseline age gap is 34.5 pts raw / 32.9 pts equal opportunity, so an absolute 10-pt rule would block every promotion.
 > - Lot 3 adds one MLflow experiment, LightGBM without `AGE_YEARS`, to measure the AUC/cost vs age-gap trade-off.
 > - The teacher is told that the SYNOPSIS KPI "gap ≤ 10 pts" now applies to gender, and that age is "measured, explained, without degradation".
@@ -77,12 +83,12 @@ Wording for non-developers in each line. Technical decisions are at the end.
 | D2 | Ratios like "annuity / income" are computed by Areej's data step. At prediction time someone must compute them **exactly the same way**, or the model sees different numbers than in training ("train/serve skew") | a) the model artifact starts with Areej's function, so the API sends raw fields (`DAYS_BIRTH`…); this changes contracts 1, 2 and 3 · b) the API calls the same shared function before the model; the model takes `params.features.all` · c) the client sends already-computed ratios | **b)**: keeps contract 1 and the model input as they are; one shared function, imported by both Areej's step and Iyed's API, plus a test that both paths give identical columns | **Whole team** | lot 2 (contract 2) |
 | D3 | With 3 zones (accept / review / refuse), what does one manual review cost, compared to a missed default (5) and a wrongly refused good client (1)? | a) add `cost.cost_review` and optimize both cut-offs · b) a fixed grey band around one cut-off · c) review band sized by analyst capacity (e.g. ≤ 10 % of files) | **a) + a capacity cap (c)**. With review = 0.3 the optimum is "accept if risk < 6 %, refuse if > 70 %": about **half** the applicants would go to review, which is unrealistic. A cap like "≤ 15 % of files to review" keeps it usable. Share of files in review shown with the numbers in lot 1 | Achraf + Areej (params) | lot 2 |
 | D4 | Exact decision strings in the API answer | a) `ACCEPTE` / `A_ETUDIER` / `REFUSE` · b) `ACCEPTÉ` / `À ÉTUDIER` / `REFUSÉ` (roadmap and SYNOPSIS) | **a)**: no accents or spaces in a machine code; accents in the report and UI only. Also fix `params.yaml:85` | **Whole team** (contract 3) | lot 1 |
-| D5 | Fairness gate for promotion. SYNOPSIS: "acceptance-rate gap ≤ 10 pts". Under-30s default about 2× more than over-50s, and age is itself a model feature, so the age gap may exceed 10 pts at any useful cut-off and **no model would ever be promoted** | a) measure on the baseline first (lot 1), then decide · b) gate on "equal opportunity": among clients who **did** repay, the acceptance gap between groups ≤ 10 pts; report the raw gap too · c) keep the raw gap | **Decided 2026-10-25 (human):** gender, absolute gate, raw ≤ 10 pts **and** equal opportunity ≤ 10 pts (XNA excluded); age, non-regression, challenger's equal-opportunity gap ≤ champion's + 2 pts, both age gaps published and tracked. Tell the teacher | Team | lot 4 |
-| D6 | PR target branch | a) `main` · b) `dev`, then release to `main` | **a)**: CI only runs on PRs to `main`. Ask Iyed to add `feature/**` to the push trigger and to fix `cache: poetry` | Team | first PR |
+| D5 | Fairness gate for promotion. SYNOPSIS: "acceptance-rate gap ≤ 10 pts". Under-30s default about 2× more than over-50s, and age is itself a model feature, so the age gap may exceed 10 pts at any useful cut-off and **no model would ever be promoted** | a) measure on the baseline first (lot 1), then decide · b) gate on "equal opportunity": among clients who **did** repay, the acceptance gap between groups ≤ 10 pts; report the raw gap too · c) keep the raw gap | **Decided 2026-10-25 (human):** gender, absolute gate, raw ≤ 10 pts **and** equal opportunity ≤ 10 pts (XNA excluded); age, non-regression anchored to the baseline: challenger's equal-opportunity gap ≤ baseline's + 2 pts (≤ 34.9 pts until lot 3 recomputes the baseline on the final test split), fixed, also for the first promotion; both age gaps published and tracked. Tell the teacher | Team | lot 4 |
+| D6 | PR target branch | a) `main` · b) `dev`, then release to `main` | ~~a)~~ **b), revised 2026-11-24:** the team merges PRs into `dev` (PR #2, #3); our PRs target `dev`. Ask Iyed to run CI on PRs to `dev`, add `feature/**` to the push trigger and fix `cache: poetry` | Team | first PR |
 | D7 | Real dates of S3…S8, Jalon 2, and the defense | — | needed to date the lots and re-plan | Human | planning |
 | D8 | With 3 zones, how do the SYNOPSIS KPIs count "to review"? Recall ≥ 65 %: is a default sent to review "detected"? Acceptance rate and fairness: is review "accepted"? | a) review = detected for recall, **not** accepted for acceptance/fairness (prudent reading) · b) review = accepted everywhere · c) KPIs computed on a 2-zone cut (review merged into refuse) | **a)**. The single cost-optimal cut-off (risk 1/6) gives a recall of only ~50 % at AUC 0.76, so the 65 % target needs either a) or a recall constraint in the optimizer (applied anyway) | Team | lot 2 |
 | D9 | Where do the cut-offs live? They are an **output** of training; writing them into `params.yaml` (an input of training) creates a DVC loop and two copies that can disagree | a) with the model version (tags + `thresholds.json`); `params.yaml` `threshold` becomes an optional manual override · b) in `params.yaml`, copied by hand | **a)**: PR to Areej to document the override | Achraf + Areej | lot 2 |
-| D10 | Thin-file KPI: "accept 2× more good payers than refusing everyone without history" is always met (2 × 0). What is the comparison policy? | a) a "classic scorecard": refuse when `EXT_SOURCE_1` and `EXT_SOURCE_3` are missing, otherwise apply our cut-off · b) keep the literal KPI | **a)**: a meaningful number for the report | Team | lot 3 |
+| D10 | Thin-file KPI: "accept 2× more good payers than refusing everyone without history" is always met (2 × 0). What is the comparison policy? | a) a "classic scorecard": refuse when `EXT_SOURCE_1` and `EXT_SOURCE_3` are missing, otherwise apply our cut-off · b) keep the literal KPI | **a)**: a meaningful number for the report. **Definition revised 2026-11-24:** thin file = Areej's merged `IS_THIN_FILE` (at least 2 of 3 `EXT_SOURCE` missing, or `AMT_REQ_CREDIT_BUREAU_YEAR` NaN or 0); the scorecard refuses every thin file | Team | lot 3 |
 | D11 | Git identity: commits must be credited to Achraf on GitHub (graded on `git log`) | check that `achraf.gharbi@mafrah.com` is linked to his GitHub account, or switch to the linked address | **check before the first commit** | Achraf | lot 1 |
 
 Technical decisions already taken (Achraf):
@@ -150,7 +156,7 @@ Changes to other owners' files go by PR:
 | `pyproject.toml` / `poetry.lock` | shared | ML dependencies (T1) |
 | `dvc.yaml` | Areej (data stages) | the train and evaluate stages |
 | `docker-compose.yml` | Iyed | MLflow service and `mlflow` bucket |
-| `params.yaml` | Areej | `data.val_size`, `cost.cost_review`, `threshold.max_review_share`, `threshold.min_recall`, `promotion.*`, `drift.*`, fix of the label spelling |
+| `params.yaml` | Areej | `data.val_size`, `cost.cost_review`, `threshold.max_review_share`, `threshold.min_recall`, `promotion.*`, `monitoring.*` (our drift-detection alert thresholds, lot 5; never under Areej's `drift:` key, which configures her simulator), fix of the label spelling |
 
 ---
 
@@ -226,7 +232,7 @@ Also write in the notebook why the cost ratio is 5:1 (roadmap requirement).
 **Lot 1 progress (2026-10-24):**
 - [x] 0. Dependencies (T1), one commit: scikit-learn 1.9.1, mlflow 3.17.2, lightgbm 4.7.0, xgboost 3.2.0, shap 0.51.0, optuna 5.0.0, scipy 1.17.1, matplotlib 3.11.2, boto3 1.43.117, **evidently pinned 0.7.23** (latest stable); jupyter, nbconvert, ipykernel in dev.
 - [x] 1. `notebooks/01_eda.ipynb` + 5 figures in `reports/figures/eda_*.png`.
-- [x] 2. `models/cost.py` in TDD, 27 tests, 100 % covered, mypy strict clean. Reviewer's mutation campaign (43 mutants): 39 killed, 4 equivalent survivors (`d == 1` vs `d != 0` / `d >= 1`, `y == 0` vs `y != 1`, `y == 1` vs `y > 0`, all equal once values are checked to be 0/1). The 5:1 rationale is written in `02_baseline.ipynb`.
+- [x] 2. `models/cost.py` in TDD, 27 tests, 100 % covered, mypy strict clean. Reviewer: round 1, 42 mutants, 33 killed / 9 survived; round 2, 45 mutants, 38 killed / 7 survived (2 equivalent, 5 now covered by tests). The 5:1 rationale is written in `02_baseline.ipynb`.
 - [x] Review corrections (2026-10-25): asymmetric binary tests, 1-D error, float/bool decisions, BOM; `ensemble=False`; exact threshold search; contract 2 per coordinator D1–D3; `≥50` label. From now on the failing test is committed before the code (`test(...)` then `feat/fix(...)`).
 - [x] 3. `notebooks/02_baseline.ipynb` + 3 figures + `reports/baseline_metrics.json`.
 - [x] 4. `docs/contracts/02-model-artifact.md`, with the contract 3 proposal (decision + `top_factors`).
@@ -315,6 +321,69 @@ Test: `main()` on synthetic data, in a `tmp_path`, with the MLflow URI `sqlite:/
 - two runs (LogReg, LightGBM) are side by side in the MLflow UI, with all metrics and curves;
 - `dvc repro train` works.
 
+**Lot 2 progress (2026-10-25, branch `feature/mlflow-training`):**
+- [x] Params PR for Areej (separate `(for Areej's review)` commits): `data.val_size`, `cost.cost_review`, `threshold.max_review_share`, `threshold.min_recall` with bounds and tests; `threshold.low/high` documented as an optional manual override (D9); `A_ETUDIER` spelling (D4).
+- [x] `data/features.py` for Areej (D2, D10): `add_derived_features`, pure, row-wise, NaN instead of ±inf, `DAYS_EMPLOYED` 365243 → NaN, thin file = `EXT_SOURCE_1` and `_3` missing; 100 % covered. **Superseded 2026-11-24:** removed in favour of Areej's `data/featurize.py` (D2, D10).
+- [x] `/models/` git-ignored (root-anchored).
+- [x] 3. `tests/conftest.py`: deterministic 2 000-row synthetic frame (8.7 % positives, NaNs in `EXT_SOURCE_*`, learnable signal).
+- [x] 4. `models/split.py` (D1), 100 %.
+- [x] 5. `models/pipeline.py`: `build_pipeline("logreg" | "lightgbm")` + `calibrate()` (`ensemble=False`), 100 %.
+- [x] 6. `models/threshold.py`: `decide`, `zone_metrics`, `optimize_thresholds` (exact search, midpoint cuts, rule A), 100 %. Quick mutation check on the boundaries: 7/7 killed (review cap `<`, recall `<=`, cost-tie `<=`, last argmin, `NEVER` → 1.0, no midpoint, strict `low < high`).
+- [x] 7. `models/train.py`: `main()`, artifacts, `--sample` (CML: 4–5 s on 5 000 rows), MLflow logging; 98 % at 10ce7ae (uncovered: the `_git_sha` failure path, the optional-tag assignment and `__main__`); 99 % after the correction pass (only `__main__`).
+- [x] 1. Walking skeleton: hand-off for Iyed in contract 2 §9 (snippet checked on a raw row). The API side is Iyed's.
+- [x] 2. MLflow service for Iyed (T8): `deploy/mlflow/Dockerfile` (mlflow 3.17.2 + boto3 1.43.117), compose service `mlflow` (SQLite volume, `--artifacts-destination s3://mlflow`, healthcheck), `mlflow` bucket in `minio-init`, `.env.example`.
+- [ ] 8. `dvc.yaml` stage `train`: **deferred**, Areej's `dvc.yaml` and `split` outputs do not exist yet. Until then a throwaway prep script (not committed) builds `data/processed/{train,test}.parquet` like the notebook.
+- [ ] The API serves the skeleton (Iyed). Adversarial review (≥ 30 mutants) and walkthrough.
+- Checks: black, flake8, mypy strict green; **176 tests** at 10ce7ae, **225** after the correction pass; total coverage 94 % → 95 % (`download.py` 64 % is Areej's, unchanged).
+
+**Measured (real data, 100k stratified sample, 80k train → 64k fit / 16k val, seed 42; validation only, test untouched):**
+
+| | LogReg (baseline) | LightGBM |
+|---|---|---|
+| ROC-AUC / PR-AUC / Brier | 0.7385 / 0.2133 / 0.0689 | **0.7535 / 0.2400 / 0.0678** |
+| Distinct calibrated probabilities | 69 | 63 |
+| Thresholds low / high (midpoints) | 0.08981 / 0.12321 | 0.08559 / 0.13261 |
+| Recall (D8) / review share | 66.2 % / 14.2 % | 67.0 % / 14.4 % |
+| Cost per file (accept all: 0.4037) | 0.3329 | **0.3179** (−4.5 % vs LogReg on val) |
+| MLflow run id | `269f4acf43a646f5b09e74f6dcc3de7f` | `a6cea7a26be8445884bdaf3e2086c288` |
+
+- LogReg reproduces the notebook validation numbers exactly (same split, same cost 0.3329).
+- LightGBM (default-ish parameters, no tuning) is −4.5 % on cost: far from −15 %. Lot 3 (Optuna, XGBoost) has to close the gap, on the test split.
+- Proof: REST API lists both runs FINISHED with the metrics, tags (`threshold_low/high` in full precision, `shap_unit`, raw md5, then named `data_hash`, renamed `raw_data_hash` in the correction pass), curves and JSON artifacts; objects are in MinIO bucket `mlflow`; both logged models reload through MLflow with identical probabilities to the local `model.joblib`.
+
+**Deviations and why:**
+- `optimize_thresholds` returns `low ≤ high`, not strictly `<`: the notebook, contract 2 (`low = high` = 2 zones) and the "accept all" candidate required by the round-2 review all need it. A strict search would also make `max_review_share = 0` infeasible. Infeasibility can then only come from a constraint outside [0, 1].
+- Rule A (coordinator): cuts at the midpoint below the chosen step. `NEVER` (just above 1.0) is not a step and stays as is: halfway between 1.0 and the next float rounds back to 1.0 (found by a test with a proba of exactly 1.0).
+- Found on the real run: parquet and JSON give `None` for missing categoricals, which `SimpleImputer` does not impute (it became a one-hot category). Fixed inside the pipeline (`none_to_nan` step), so the API gets it too; test added.
+- Found on the real run: MLflow prints an emoji, which crashed on a redirected cp1252 Windows stdout (as under `dvc repro`). `main()` now replaces unencodable characters.
+- Host-side `mlflow.sklearn.load_model` hung: the server advertises multipart downloads with presigned URLs for `http://minio:9000`. Host clients set `MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false` (`.env.example`, for Iyed's review).
+- `joblib` added to the mypy untyped list (`pyproject.toml`, shared).
+- LightGBM hyperparameters are fixed in `pipeline.py` until Optuna (lot 3). Both preprocessing branches are identical for both models (scaling is harmless for trees).
+- The thresholds are run tags and logged-model tags (MLflow 3 `LoggedModel`); they become model-version tags at registration (lot 3).
+- `train` does not apply the `params.threshold.low/high` override: it is a serving-time override (contract 2 §5).
+- `docker compose -p mlops-project-2026-groupea up -d --build mlflow` from this worktree recreated the MinIO container (its config hash changed); data is on the named volume and was checked intact (158 MiB in `dvc-store`).
+
+- **CML numbers on the 5k fixture look poor by design.** With 1 000 validation rows, the isotonic map has very few, coarse steps, and `min_recall = 0.65` must still be met: LogReg then costs **0.546 per file vs 0.405 for "accept all"** (LightGBM 0.425). This is not a bug. CML on the fixture checks that training runs and gives a plausible AUC, not the business cost; the cost KPI is read on the full split.
+
+**Lot 2 correction pass (2026-10-25, review of 10ce7ae: "ready with corrections", no blocking item):**
+- [x] Important 1, compose (Iyed): `--allowed-hosts "mlflow:5000,localhost:${MLFLOW_PORT:-5000},127.0.0.1:${MLFLOW_PORT:-5000}"`. Container recreated with `-p mlops-project-2026-groupea`. Proven: a container on the compose network loads both logged models (`http://mlflow:5000`, same probabilities as `model.joblib`, no extra env var); the host gets 200; an unlisted Host still gets 403. `dvc status -c` from the main copy: "Cache and remote 'minio' are in sync". Contract 2 §9 corrected (containers: allowed-hosts; host: `MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false`).
+- [x] Important 2, `features.py` (Areej): the 8 raw inputs are cast to float64 first; a one-row request with `DAYS_BIRTH`/`DAYS_EMPLOYED` None no longer raises, and the pandas FutureWarning is gone. The reviewer's serving probe now serves 200/200 raw rows with None.
+- [x] Minor 3–6, `threshold.py`: lowest-step cut = `cut / 2`; a midpoint that rounds onto the lower step (neighbouring doubles) keeps the cut; proba and thresholds must be finite and in [0, 1] (`NEVER` allowed) in `decide` and `optimize_thresholds`; one message per input check; both internal guards reached by monkeypatch tests (no `pragma`). Split index and `-inf` tests added. The baseline notebook uses the same midpoint rule (re-executed, outputs byte-identical).
+- [x] Minor 7: run tags `raw_data_hash` (DVC md5 of the raw CSV) and `train_data_hash` (md5 of the file read); `git_sha` tested.
+- [x] Minor 8 (Areej): the `params.yaml` override accepts `low == high`.
+- [x] Minor 9: decisions doc (no separate uncalibrated artifact), contract 2 §2 (fit part = 80 % of train), §3 (parity test pending), §7 (tags), this coverage note.
+- [x] Minor 10 (Iyed): `${MLFLOW_PORT:-5000}`, `MLFLOW_PORT` in `.env.example`, compose comment on the MinIO root account (local use only).
+- [x] Minor 11: test of the cp1252 fix (fails without it). Commit `af69614` has a wrong subject (it adds the hash/git_sha tag test, not a split test); recorded in the next commit, history not rewritten.
+- [x] Minor 12: CML note above.
+- ~~Mutation replay: 78 run, 78 killed~~ **Withdrawn, did not reproduce.** In the `git archive` copy the old `git_sha` test failed on its own (no `.git`), so several "kills" were that failure, not the mutant. Rule since then: run the unmutated suite in the copy first, and quote mutation numbers only from a log.
+- **Probes replayed:** `probe_threshold` (its brute force uses a 2.0 cut, now rejected by design: replayed with `NEVER`): 0 mismatches in 300 random cases, adjacent-float steps now resolved, float32 and JSON round-trips exact. `probe_lowest_step`: cut 0.005, float32 gives the same decisions. `probe_serving`: 200/200; a column absent from the request (not None) still raises `KeyError`. The API must send every column, with None if missing (contract 3, Iyed). `probe_mlflow`: contract-2 run, new tags present, reload identical.
+
+**Lot 2 status: reviewed "ready" (2026-10-25) after two review rounds and a final minor pass.**
+- Reviewer mutation counts: round 1, 63 mutants, 56 killed / 7 survived; round 2, 87 run, 79 killed / 8 survived (4 equivalent, 4 fixed in the final pass).
+- Final minor pass: the `git_sha` test uses throwaway repositories (it failed outside a checkout); survivors #66 (accept-all keeps `NEVER`), #88 (every raw input cast to float64, warnings as errors), #90 (`--sample` tags the md5 of the sample file) and #93 (accept-all with probabilities of exactly 1.0) are killed. Contract 2 §3/§9 and the contract-3 proposal: every raw column must be present, the API fills an absent field with `None`. §5: float32 caveat for neighbouring doubles. Compose header shows `${MLFLOW_PORT:-5000}`.
+- Replay of `mutate2.py` on a `git archive` copy of the final pass (unmutated suite first: 227 passed with no `.git`): **87 run, 83 killed, 4 survived, 9 skipped** (old mutants whose line changed). The 4 survivors are equivalent: #19 and #70 (the same checks with the same messages run again in `business_cost` / `decide`), #82 (`size` vs `shape` once both are 1-D), #61 (EXT_SOURCE column order). Log: `scratchpad/lot2-fix2/mutation3.log` of the session.
+- Checks: 227 tests, coverage 95 % (new modules 100 %, `train.py` 99 %: `__main__`).
+
 ### Lot 3 — S4: comparison, evaluate, registry (Jalon 2) · branch `feature/model-registry` · ~10 h incl. review
 
 **Depends on:** lot 2 and D10.
@@ -373,7 +442,7 @@ Tests:
 - `auc_ch ≥ auc_champ`;
 - `auc_ch ≥ 0.75`;
 - **gender (D5)**: the acceptance-rate gap (`ACCEPTE` only) between F and M, `XNA` excluded, is ≤ 10 pts, **and** the equal-opportunity gap is ≤ 10 pts;
-- **age bands (D5)** (<30, 30–50, ≥50): non-regression only, `eo_gap_age_ch ≤ eo_gap_age_champ + 2` pts. No absolute age gate. Both age gaps are logged at every evaluation.
+- **age bands (D5)** (<30, 30–50, ≥50): non-regression anchored to the baseline, `eo_gap_age_ch ≤ eo_gap_age_baseline + 2` pts (baseline = LogReg recomputed by `evaluate` on the same test split; 32.9 pts until then, so ≤ 34.9). Fixed: it applies to the first promotion too and cannot creep. No absolute age gate. Both age gaps are logged at every evaluation.
 
 Otherwise nothing changes, and the exit code and log say why. The thresholds come from `params.yaml` (`promotion` key: 10 pts gender, +2 pts age tolerance).
 
@@ -402,7 +471,7 @@ Stop point: a short review before it is wired into Prefect.
 - `psi(ref, cur, bins=10)`, written by hand: quantile bins on the reference, deduplicated, with an epsilon for empty bins.
 - `ks_test`, `chi2_test`, `drift_share`.
 - `compute_drift_report(ref, cur, labels=None) -> dict` (contract 4).
-- The alert fires when `drift_share ≥ 0.30`, or PSI ≥ 0.20 on a key feature, or `auc_drop > 0.03`.
+- The alert fires when `drift_share ≥ 0.30`, or PSI ≥ 0.20 on a key feature, or `auc_drop > 0.03`. These thresholds go in `params.yaml` under a **new `monitoring:` key** (PR on `params.yaml` + `config.py` for Areej), never under `drift:`, which is Areej's simulator configuration.
 
 **3. Tests.**
 - `tests/test_psi.py`: PSI = 0 on identical data; a hand-computed known value; empty bins stay finite; constant and binary columns; NaN handling.
@@ -458,7 +527,7 @@ These are Claude's work hours, reviews included. Not included: Achraf's decision
 |---|---|
 | Areej's S3 outputs are late | Synthetic frame + local split; the DVC stages are wired when her outputs land |
 | The team misses the S3 checkpoint because no model exists | Walking skeleton at the start of lot 2 |
-| The fairness gate never passes (age) | Measured in lot 1 (34.5 / 32.9 pts); D5 decided 2026-10-25: absolute gate on gender only, non-regression on age |
+| The fairness gate never passes (age) | Measured in lot 1 (34.5 / 32.9 pts); D5 decided 2026-10-25: absolute gate on gender only; age ≤ baseline + 2 pts (fixed anchor) |
 | Recall ≥ 65 % is not reached | Recall constraint in the optimizer; D8 |
 | Brier ≤ 0.07 is not reached | CV calibration; reported honestly (T6) |
 | `poetry.lock` conflicts | One early dependencies PR (T1) |

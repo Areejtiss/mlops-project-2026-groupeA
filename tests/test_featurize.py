@@ -144,6 +144,38 @@ def test_no_bureau_history_is_thin_file(requests: float) -> None:
     assert derive(AMT_REQ_CREDIT_BUREAU_YEAR=requests)["IS_THIN_FILE"] == 1
 
 
+# --- one-row API requests with None (JSON null) ---------------------------------
+
+
+def derive_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Same path as the API: fix the sentinel, then add the derived features."""
+    return add_derived_features(fix_days_employed(df))
+
+
+def test_one_row_request_with_every_field_none() -> None:
+    # A JSON request with every field null: one row, object columns of None.
+    df = pd.DataFrame([{col: None for col in raw_row()}])
+    row = derive_frame(df).iloc[0]
+    for col in ["ANNUITY_INCOME_RATIO", "CREDIT_TERM", "AGE_YEARS", "EMPLOYED_YEARS"]:
+        assert np.isnan(row[col]), col
+    assert row["DAYS_EMPLOYED_ANOM"] == 0
+    assert row["EXT_SOURCE_MISSING_COUNT"] == 3
+    assert row["IS_THIN_FILE"] == 1
+
+
+@pytest.mark.filterwarnings("error")
+@pytest.mark.parametrize("col", list(raw_row()))
+def test_one_row_request_with_one_field_none(col: str) -> None:
+    df = pd.DataFrame([raw_row()]).astype(object)
+    df[col] = None
+    out = derive_frame(df)
+    assert out[col].isna().all()
+    assert out[col].dtype == "float64", col  # None became NaN
+    derived = ["ANNUITY_INCOME_RATIO", "CREDIT_INCOME_RATIO", "CREDIT_TERM"]
+    derived += ["AGE_YEARS", "EMPLOYED_YEARS", "EXT_SOURCE_MISSING_COUNT"]
+    assert np.isfinite(out[derived].astype(float).fillna(0)).all().all()
+
+
 # --- sparse columns ------------------------------------------------------------
 
 
