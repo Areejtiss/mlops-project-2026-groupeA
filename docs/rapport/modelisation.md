@@ -20,7 +20,7 @@ Ces sections couvrent les chapitres attribués à Achraf dans la roadmap d'équi
 - **Calibration :** `CalibratedClassifierCV(isotonic, cv=5, ensemble=False)` sur la partie fit ; la validation ne sert qu'aux seuils et à la sélection (T2) [P, §2].
 - **Réglage :** Optuna, 25 essais pour LightGBM et XGBoost, sur la validation croisée à 5 plis de la partie fit (chaque essai est un run MLflow imbriqué) [P, lot 3, L3-2].
 - **Sélection (L3-1) :** sur la validation uniquement. Parmi les runs qui respectent les contraintes (recall ≥ 65 %, au plus 15 % en étude), on garde ceux d'AUC ≥ 0,75, puis le **coût par dossier le plus bas**. Le test n'est lu qu'une fois, par `evaluate`, après la sélection [P, lot 3].
-- **Déséquilibre :** `class_weight="balanced"` / `scale_pos_weight`, jamais SMOTE (T5) [P, §2].
+- **Déséquilibre** (T5, jamais SMOTE) [`src/crediscore/models/pipeline.py`] : `class_weight="balanced"` pour la LogReg et le RandomForest, **`is_unbalance=True` pour LightGBM** (le champion), `scale_pos_weight` = négatifs / positifs pour XGBoost.
 
 ### 1.2 Tableau comparatif (validation, expérience MLflow `crediscore`) [P, lot 3]
 
@@ -34,7 +34,7 @@ Ces sections couvrent les chapitres attribués à Achraf dans la roadmap d'équi
 
 « Tout accepter » coûte 0,4037 par dossier sur la validation [P, lot 3].
 
-- **Lecture :** RandomForest tombe sous le plancher de 0,75. XGBoost a presque la même AUC que LightGBM mais un coût plus élevé : ses seuils envoient moins de dossiers en étude (11,4 %) et il refuse davantage. **Champion : LightGBM**, enregistré comme `crediscore` **v1**, alias `champion` (run `1c3f3b8712aa43d491ec3882bf64e70e`) [P, lot 3 ; C2 §7].
+- **Lecture :** RandomForest tombe sous le plancher de 0,75. XGBoost a presque la même AUC que LightGBM mais un coût plus élevé (0,3428 contre 0,3070) ; c'est aussi le run qui envoie le moins de dossiers en étude (11,4 %). **Champion : LightGBM**, enregistré comme `crediscore` **v1**, alias `champion` (run `1c3f3b8712aa43d491ec3882bf64e70e`) [P, lot 3 ; C2 §7].
 - **Courbes :** chaque run `train` contient dans MLflow `roc_curve.png`, `pr_curve.png`, `calibration_curve.png` et `confusion_matrix.png` (validation), et les métriques `val_*`. Pour les slides, faire les captures dans l'UI MLflow : vue « Compare » des 5 runs, puis le Registry (`crediscore`, alias `champion`). Les courbes de la baseline sont aussi dans `reports/figures/baseline_roc_pr_calibration.png`.
 
 ### 1.3 Champion sur le test (`evaluate`, seul lecteur du test) [M]
@@ -46,7 +46,7 @@ La baseline LogReg est **réentraînée à l'identique sur le même `train.parqu
 | ROC-AUC | 0,7346 | 0,7469 |
 | PR-AUC | 0,2079 | 0,2267 |
 | Brier | 0,0692 | 0,0685 |
-| Recall (D8) | 69,4 % | 66,9 % |
+| Recall (D8) | 69,3 % | 66,9 % |
 | En étude | 14,4 % | 14,5 % |
 | Coût / dossier | 0,3519 | 0,3203 |
 | Seuils low / high | 0,0763 / 0,1145 | 0,0941 / 0,1329 |
@@ -70,13 +70,15 @@ La baseline LogReg est **réentraînée à l'identique sur le même `train.parqu
   - **au plus 15 % des dossiers en étude** (D3 : capacité des analystes).
 - Les seuils sont une **sortie** de l'entraînement : ils voyagent avec la version du modèle (`thresholds.json` et tags MLflow, D9).
 
-### 2.3 Pourquoi trois zones : les chiffres de la baseline (lot 1) [P, lot 1]
+### 2.3 Pourquoi trois zones : les chiffres de la baseline (lot 1) [B, `policies_test` ; P, lot 1]
 
 | Politique (baseline, test du lot 1) | Recall | En étude | Coût / dossier |
 |---|---|---|---|
-| Un seul seuil optimal (0,1707) | 38,6 % | 0 % | 0,340 |
-| 3 zones sans plafond (0,0571 / 0,7500) | — | 48,7 % | — |
-| **3 zones D3 (0,0926 / 0,1378)** | 66,5 % | 14,2 % | **0,325** |
+| Un seul seuil optimal (coupure 0,1666) | 38,6 % | 0 % | 0,340 |
+| 3 zones sans plafond (coupures 0,0562 / 0,625) | — | 48,7 % | — |
+| **3 zones D3 (coupures 0,0898 / 0,1232)** | 66,5 % | 14,2 % | **0,325** |
+
+Les coupures sont celles réellement appliquées (au milieu entre deux paliers de l'isotonique, `reports/baseline_metrics.json`) ; le plan cite les paliers eux-mêmes (0,1707 ; 0,0571 / 0,7500 ; 0,0926 / 0,1378).
 
 - Avec **un seul seuil**, l'optimum ne détecte que 38 % des défauts. Imposer 65 % de recall avec un seul seuil coûte même plus cher que tout accepter (0,409 contre 0,404 par dossier) [P, lot 1].
 - **Sans plafond**, l'optimum envoie la moitié des dossiers en étude, ce qui est irréaliste.
@@ -205,7 +207,7 @@ Acceptation par tranche, champion : <30 ans 46,9 %, 30-50 ans 63,9 %, ≥50 ans 
 
 ### 5.4 Leçon : le bug du PSI trouvé en relecture (lot 5) [P, lot 5, B1 ; C4 §4]
 
-- **Le bug :** la première version faisait de chaque quantile **un bin d'un seul point**. Or 37 % des revenus du test tombent exactement sur un décile (revenus ronds). Multiplier le test par (1 + 1e-9), soit un décalage invisible, sortait ces valeurs de leur bin : **PSI de 2,97 sur le revenu, et une fausse alerte**.
+- **Le bug :** la première version faisait de chaque quantile **un bin d'un seul point**. Or 37 % des revenus du test tombent exactement sur un décile (revenus ronds). Multiplier le test par (1 + 1e-9), soit un décalage invisible, **sans aucune dérive**, sortait ces valeurs de leur bin : **PSI d'environ 2,9 sur le revenu, et une fausse alerte** [C4 §4].
 - **Trouvé par :** une sonde de la relecture adversariale (gigue × (1 ± 1e-9), aller-retour float32).
 - **Correction :** des **intervalles**, dont chaque borne est placée à mi-chemin entre un quantile et la valeur distincte suivante de la référence. Aucune borne ne tombe donc sur une valeur réelle. Les mêmes sondes donnent alors un PSI de 0,000.
 - **Effet sur la crise :** PSI du revenu 2,971 → 0,262, du crédit 0,579 → 0,231. L'alerte reste vraie, pour la bonne raison.
@@ -221,6 +223,7 @@ Acceptation par tranche, champion : <30 ans 46,9 %, 30-50 ans 63,9 %, ≥50 ans 
   - un alias désigne une seule version à la fois, sans la sémantique figée des 4 stages ;
   - l'historique est porté par les tags de chaque version (`promotion_*`, `promoted_at`).
 - **La promotion est relative :** même lot récent, chacun avec ses seuils ; AUC ≥ champion, coût ≤ champion, D5 [C2 §1].
+  - **Limite connue (règle du lot 4) :** la porte ne compare que l'AUC, le coût et l'équité. Un challenger à AUC et coût égaux mais au recall, à la PR-AUC ou au Brier moins bons peut donc être promu ; ces métriques sont publiées dans `promotion.json` (`scores`), pas vérifiées.
   - Un seuil absolu « AUC ≥ 0,75 » aurait bloqué toute promotion : le champion fait 0,7469 sur le test.
   - Les cibles 0,75 / 0,25 / −15 % restent des **KPI publiés**, pas des conditions de promotion.
 - **Boucle vérifiée le 25/11/2026** sur un serveur jetable [H §6] : dérive de la crise → alerte → réentraînement → `challenger` v2 → promotion sur `holdout.parquet` (code 0) → `champion` passe sur v2, avec l'historique `promotion_previous_champion = 1` et `promoted_at`.
