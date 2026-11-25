@@ -225,7 +225,7 @@ Deux clés **optionnelles**, ajoutées **après `alert`** (les sept clés exista
 | `n_labelled` | entier | Lignes labellisées auditées |
 | `gender` | objet | `raw_gap_pts`, `eo_gap_pts` (points), `acceptance_by_group`, `acceptance_good_payers_by_group` (parts), `excluded_rows` (`XNA` ou vide) : exactement les champs de `reports/metrics.json` |
 | `age` | objet | Mêmes champs, tranches `<30`, `30-50`, `≥50` |
-| `d5` | objet ou `null` | `{age_anchor_pts, checks, pass}` : les trois conditions D5 (`gender_raw_gap`, `gender_eo_gap`, `age_eo_gap`, chacune `{value, limit, pass}`, bornes incluses, tolérances `params.promotion`) contre l'ancre d'âge lue dans `--metrics` (`baseline.fairness.age.eo_gap_pts`) ; `pass` = les trois. `null` si le fichier ou l'ancre manque |
+| `d5` | objet ou `null` | `{age_anchor_pts, checks, pass, reason}` : les trois conditions D5 (`gender_raw_gap`, `gender_eo_gap`, `age_eo_gap`, chacune `{value, limit, pass}`, bornes incluses, tolérances `params.promotion`) contre l'ancre d'âge lue dans `--metrics` (`baseline.fairness.age.eo_gap_pts`) ; `pass` = les trois, `reason` = `null`. **Sans comparaison possible selon le sexe** (moins de 2 groupes de sexe, `XNA` exclu, ayant chacun au moins `promotion.min_group_rows` = 500 lignes labellisées : la règle de `promote`) : `pass` = `null`, `reason` = `"gender_groups_missing"`, `checks` et écarts toujours publiés (un seul groupe donnerait un écart de 0, donc un faux « respecté »). `d5` = `null` si le fichier ou l'ancre manque |
 
 Un `d5.pass = false` n'est **pas** une alerte et ne déclenche aucun réentraînement : c'est un signal pour l'équipe (et le rapport). La promotion, elle, refuse toujours un challenger qui échoue D5 (contrat 2 §1).
 
@@ -238,7 +238,7 @@ Un `d5.pass = false` n'est **pas** une alerte et ne déclenche aucun réentraîn
 
 ### 9.4 Exemple réel (25/11/2026)
 
-Même commande que la section 8, sur le serveur MLflow jetable du lot 6 (`--model models:/crediscore@champion`, version enregistrée depuis `models/model.joblib`, `--metrics reports/metrics.json`) ; les sept premières clés sont identiques à la section 8 :
+Même commande que la section 8, sur un serveur MLflow jetable (`--model models:/crediscore@champion`, `--metrics reports/metrics.json`). Le champion y est obtenu par l'amorçage documenté (passation, `docs/handoff/boucle-reentrainement.md`) : `train` avec les paramètres figés sur `train.parquet`, puis `registry --select` et `promote`. C'est le même modèle que `models/model.joblib` (entraînement déterministe : AUC de validation 0,7670, mêmes seuils) ; la relecture des lots 6-7 a rejoué cet amorçage et retrouvé les mêmes chiffres. Les sept premières clés sont identiques à la section 8 :
 
 ```json
 "prediction": {
@@ -251,7 +251,7 @@ Même commande que la section 8, sur le serveur MLflow jetable du lot 6 (`--mode
   "n_labelled": 20000,
   "gender": {"raw_gap_pts": 7.77, "eo_gap_pts": 6.46, "...": "..."},
   "age": {"raw_gap_pts": 35.46, "eo_gap_pts": 34.00, "...": "..."},
-  "d5": {"age_anchor_pts": 38.675, "pass": true, "checks": {"age_eo_gap": {"value": 34.00, "limit": 40.675, "pass": true}, "...": "..."}}
+  "d5": {"age_anchor_pts": 38.675, "checks": {"age_eo_gap": {"value": 34.00, "limit": 40.675, "pass": true}, "...": "..."}, "pass": true, "reason": null}
 }
 ```
 
