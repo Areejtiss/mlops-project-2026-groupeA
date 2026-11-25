@@ -199,6 +199,8 @@ def test_report_has_exactly_the_contract_keys_and_types(
         "chi2",
         "auc_drop",
         "alert",
+        "prediction",
+        "fairness",
     )
     assert list(report) == list(REPORT_KEYS)
     assert report["timestamp"] == "2026-11-24T10:30:00+00:00"
