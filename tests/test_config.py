@@ -109,6 +109,17 @@ def test_ci_sample_must_be_smaller_than_sample(tmp_path: Path) -> None:
         load_params(path)
 
 
+def test_holdout_size_is_loaded() -> None:
+    assert load_params(PARAMS_FILE).data.holdout_size == 20_000
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_holdout_size_must_be_positive(tmp_path: Path, value: int) -> None:
+    path = write_params(tmp_path, {"data": {"holdout_size": value}})
+    with pytest.raises(ValidationError, match=r"holdout_size\n.*greater than"):
+        load_params(path)
+
+
 def test_lot2_keys_are_loaded() -> None:
     params = load_params(PARAMS_FILE)
     assert params.data.val_size == 0.2
@@ -161,3 +172,54 @@ def test_negative_drift_factor_is_rejected(tmp_path: Path) -> None:
     path = write_params(tmp_path, {"drift": {"economic_crisis": crisis}})
     with pytest.raises(ValidationError, match="income_factor"):
         load_params(path)
+
+
+def test_promotion_keys_are_loaded() -> None:
+    promotion = load_params(PARAMS_FILE).promotion
+    assert promotion.max_gender_gap_pts == 10
+    assert promotion.age_gap_margin_pts == 2
+
+
+@pytest.mark.parametrize("key", ["max_gender_gap_pts", "age_gap_margin_pts"])
+@pytest.mark.parametrize("value", [-0.1, 100.1])
+def test_promotion_gap_outside_0_100_points_is_rejected(
+    tmp_path: Path, key: str, value: float
+) -> None:
+    path = write_params(tmp_path, {"promotion": {key: value}})
+    with pytest.raises(ValidationError, match=rf"{key}\n.*(greater|less) than"):
+        load_params(path)
+
+
+@pytest.mark.parametrize("value", [0, 100])
+def test_promotion_gap_bounds_are_inclusive(tmp_path: Path, value: float) -> None:
+    path = write_params(
+        tmp_path,
+        {"promotion": {"max_gender_gap_pts": value, "age_gap_margin_pts": value}},
+    )
+    promotion = load_params(path).promotion
+    assert promotion.max_gender_gap_pts == promotion.age_gap_margin_pts == value
+
+
+def test_promotion_batch_size_keys_are_loaded() -> None:
+    promotion = load_params(PARAMS_FILE).promotion
+    assert promotion.min_rows == 5000
+    assert promotion.min_group_rows == 500
+
+
+@pytest.mark.parametrize("key", ["min_rows", "min_group_rows"])
+def test_promotion_row_minimum_must_be_positive(tmp_path: Path, key: str) -> None:
+    path = write_params(tmp_path, {"promotion": {key: 0}})
+    with pytest.raises(ValidationError, match=rf"{key}\n.*greater than"):
+        load_params(path)
+
+
+def test_two_gender_groups_must_fit_in_the_minimum_batch(tmp_path: Path) -> None:
+    path = write_params(
+        tmp_path, {"promotion": {"min_rows": 999, "min_group_rows": 500}}
+    )
+    with pytest.raises(ValidationError, match="at least twice min_group_rows"):
+        load_params(path)
+    ok = write_params(
+        tmp_path, {"promotion": {"min_rows": 1000, "min_group_rows": 500}}
+    )
+    assert load_params(ok).promotion.min_rows == 1000

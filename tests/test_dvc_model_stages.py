@@ -25,7 +25,7 @@ def _option(cmd: str, flag: str) -> str:
     return args[args.index(flag) + 1]
 
 
-@pytest.mark.parametrize("name", ["train", "evaluate"])
+@pytest.mark.parametrize("name", ["train", "evaluate", "holdout"])
 def test_every_listed_param_exists_in_params_yaml(
     stages: dict[str, Any], name: str
 ) -> None:
@@ -96,3 +96,33 @@ def test_stages_depend_on_every_module_they_import(
     expected.add("src/crediscore/config.py")
     assert expected <= imported
     assert expected <= set(stages[name]["deps"])
+
+
+def test_evaluate_tracks_the_fairness_audit_and_the_promotion_tolerances(
+    stages: dict[str, Any],
+) -> None:
+    ev = stages["evaluate"]
+    assert "src/crediscore/fairness/audit.py" in ev["deps"]
+    assert {
+        "promotion.max_gender_gap_pts",
+        "promotion.age_gap_margin_pts",
+    } <= set(ev["params"])
+    assert "promotion" not in ev["params"]  # min_rows is not read by evaluate
+
+
+def test_holdout_reads_the_raw_file_and_the_sample_and_writes_the_batch(
+    stages: dict[str, Any],
+) -> None:
+    ho = stages["holdout"]
+    assert ho["cmd"] == "python -m crediscore.data.holdout"
+    assert {
+        "src/crediscore/data/holdout.py",
+        "src/crediscore/data/featurize.py",
+        "src/crediscore/data/sampling.py",
+        "src/crediscore/data/schema.py",
+        "src/crediscore/config.py",
+        "data/raw/application_train.csv",
+        "data/processed/features.parquet",
+    } <= set(ho["deps"])
+    assert ho["outs"] == ["data/processed/holdout.parquet"]
+    assert {"data.holdout_size", "data.random_state", "features"} <= set(ho["params"])
