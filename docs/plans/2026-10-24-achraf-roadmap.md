@@ -424,7 +424,7 @@ The `--sample` run on the 5k fixture finishes in under a minute, for Iyed's CML.
 **Lot 3 coordinator decisions (final):**
 - **L3-1 selection:** candidates need validation ROC-AUC ≥ 0.75 if any reaches it; the best has the lowest validation cost per file under the D3/D8 constraints; ties are broken by validation AUC. The test split is never used for selection. By design, an experiment-tagged winner aborts registration (`--allow-experiment` forces it).
 - **L3-2 Optuna:** 20–30 trials each for LightGBM and XGBoost, 5-fold stratified CV ROC-AUC on the fit part, TPE seeded, nested runs.
-- **L3-3 registry:** `crediscore`; `champion` if none exists, else `challenger`; tags as in contract 2 §7. No promotion logic (lot 4).
+- **L3-3 registry:** `crediscore`; `champion` if none exists, else `challenger`; tags as in contract 2 §7. No promotion logic (lot 4). **Revised 2026-11-25 (lots 6-7 review, important 2):** always `challenger`, even the first model; `promote` gates it (fairness only without a champion), so its exit 0 always means deploy. `--select` exits 3 when the selected run is the champion's, and a full tie keeps the champion's run.
 - **L3-4 baseline:** `evaluate` compares the model with a LogReg baseline trained identically on the same train.parquet, on test. KPI = (cost_model − cost_base) / cost_base.
 - **L3-5 no_age:** an extra LightGBM run without `AGE_YEARS`, tag `experiment=no_age`.
 - **L3-6 honesty:** missed targets are reported with their gap; a target is never relaxed and nothing is tuned on test.
@@ -755,7 +755,23 @@ Stop point: a short review before it is wired into Prefect.
 - [x] `docs/rapport/slides-modelisation.md` (`583bc6c`): 6 slides with speaker notes, the 1:00 and 2:30 demo slots and what to prepare.
 - [x] `docs/rapport/walkthrough-achraf.md` (`c3e10d3`): one block per module (cost, split, pipeline, threshold, train, tune, evaluate, registry, promote, holdout, audit, shap_explainer, drift) and the guide's §9.3 MLflow / Evidently questions.
 - [ ] Rehearsal of the 1:00 and 2:30 slots, and the MLflow screenshots: the human.
-- [ ] Adversarial review of lots 6-7 by a fresh agent, and walkthrough with Achraf.
+- [x] Adversarial review of lots 6-7 (review of `23a5297`: "ready with corrections", nothing blocking); correction pass below.
+- [ ] Walkthrough with Achraf.
+
+**Lots 6-7 correction pass (2026-11-25, on `a80c90d`, decisions final, product ones by the standing "adopt the recommended option"):**
+- [x] I1 endless re-promotion: (a) `registry --select` registers nothing and exits **3** (`nothing to register: selected run is already champion`) when the selected run is behind `@champion` (tests `50ca372`, code `ba7ba11`); (b) hand-off: the `training_flow` runs only when the training file's md5 differs from the champion's `train_data_hash`, exit 3 = nothing to do, no deploy (`af7b4e5`). **Found while replaying the reviewer's cycle 2:** (a) alone did not stop the loop, because a retrain on unchanged data ties exactly with the champion's run and the newest run won. Technical fix: `select_run(prefer=<champion run>)` keeps the champion's run on a full tie (cost and AUC), never over a better run (tests `6ba1694`, code `2db1de9`).
+- [x] I2 first model gated: `register` always sets `@challenger`; promote tests build their champion through a helper; the loop test promotes the bootstrap model (exit 0, fairness only). Contract 2 §1/§7 (`37f0ed1`, for Areej and Iyed's review), hand-off (stdout-parsing step and "first model deployed anyway" row removed), L3-3 note above.
+- [x] I3 `fairness.d5` without a gender comparison: `gender_groups_ok` extracted from promote's `batch_check` (XNA excluded, `promotion.min_group_rows`) and reused; below 2 groups, `d5.pass = null`, `reason = "gender_groups_missing"`, checks and gaps published; `reason` is a fixed key (`null` otherwise). Tests all F, all XNA, boundary, labelled rows only (`f8a2ef9`, `fd34217`); contract 4 §9.2 and §9.4 (`c4b399c`).
+- [x] I4/I5 and minors in the report, slides and walkthrough (`37ca969`, `14d30d5`, `63c5e15`): PSI bug figure (jitter on unchanged data ≈ 2.9; 2.971 → 0.262 is the crisis income), alert → training_flow with `drift_alert` as a display gauge, baseline recall 69.3 %, applied midpoint cuts from `baseline_metrics.json` (plan values named as steps), XGBoost sentence from committed numbers, like-for-like recall on the slides, hedged no_age reading, hold-out reused at every promotion, each model's imbalance option (LightGBM `is_unbalance`), the gate's known limit (AUC, cost and fairness only).
+- [x] Hand-off minors: `--output-dir models/challenger`; crash between the two alias writes (re-set `@challenger` by hand, then re-run promote); orphan version ignored by promote; documented bootstrap wording in contract 4 §9.4 and hand-off §6; example key order `age_anchor_pts, checks, pass, reason`.
+- [x] Survivor #36 killed: CLI test without `--metrics` from a cwd holding `reports/metrics.json` (`f8a2ef9`).
+- The loop test now measures the age anchor on the promotion batch (on 1 500-row synthetic sets, test and hold-out age gaps differ by a few points of sampling noise alone: 19.6 vs 23.9 for the same model), shows a blocked run with a test-only 0-pt margin, then promotes with the real 2-pt margin. About 20 s.
+- **Replays** (logs in the session's `scratchpad/lot67fix/`):
+  - reviewer's replay steps adapted, throwaway server port 5341 (stopped): bootstrap → v1 `@challenger` → promote exit 0 (gender 7.9 / 6.9, age EO 32.2 ≤ 40.7) → `champion` v1; crisis drift alert true (psi_proba 0.031, acceptance 0.673 → 0.625); retrain on the same file → `registry` exit 3; second cycle exit 3; one version in the end (`replay_adapted.log`);
+  - reviewer probes p1-p3 from copies (`probes_replay.log`): p1 recompute matches (psi_proba 0.0305, acceptance −4.85 pts, gaps 7.77 / 6.46 and 35.46 / 34.00); p2 single gender group, 10 men, all XNA, 1 000 labelled rows → `d5.pass` null; p3 old PSI on jitter 2.906, crisis income 2.971;
+  - reviewer's `mutate.py` on a `git archive` copy of `2db1de9` (unmutated suite first: 120 passed): **38 mutants, 37 killed, 0 survived, 1 invalid** (#19, the `d5.pass` line it targets was rewritten by I3; `all` → `any` is still killed by `test_fairness_drift_d5_fails_when_one_check_fails`, replayed on the new line: `mutation_any_replay.log`) (`mutation_reviewer_replay.log`);
+  - own set on the new code, second copy (`mutation_own.log`): **22 mutants, 21 killed, 1 survivor, equivalent** (#12, `champion_run_id` returning `''` instead of `None`: neither matches a run id).
+- Checks after the pass: black, flake8, mypy strict green; **612 tests pass** (601 before), coverage 95 %; `registry` 99 %, `promote` 99 %, `drift` 99 % (the `__main__` lines).
 
 ---
 
