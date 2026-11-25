@@ -21,7 +21,7 @@ Plan des slides et notes orales. Les chiffres viennent de `docs/rapport/modelisa
 
 **Notes orales :**
 - « La sélection se fait sur la validation, découpée dans le train. Le test n'est lu qu'une fois, par `evaluate`. »
-- « Règle : AUC ≥ 0,75, puis le coût le plus bas sous les contraintes. XGBoost a presque la même AUC, mais il refuse plus : il coûte plus cher. »
+- « Règle : AUC ≥ 0,75, puis le coût le plus bas sous les contraintes. XGBoost a presque la même AUC, mais il coûte plus cher (0,343 contre 0,307 par dossier). »
 - « Optuna : 25 essais par modèle, chacun visible comme run imbriqué. »
 
 ## Slide 3 — Seuils et coût métier : 3 zones (30 s)
@@ -30,7 +30,7 @@ Plan des slides et notes orales. Les chiffres viennent de `docs/rapport/modelisa
 
 **Notes orales :**
 - « Coûts : défaut raté 5, bon client refusé 1, étude manuelle 0,3. »
-- « Un seul seuil ne détecte que 38 % des défauts. Trois zones avec au plus 15 % de dossiers en étude atteignent 66,9 % de recall. »
+- « Sur la baseline, trois zones avec au plus 15 % de dossiers en étude atteignent 66,5 % de recall (un seul seuil : 38 %) ; le champion fait 66,9 %. »
 - « Les seuils sont une sortie de l'entraînement : ils voyagent avec la version du modèle. »
 
 ## Slide 4 — SHAP : pourquoi cette décision (30 s)
