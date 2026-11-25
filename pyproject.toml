@@ -28,6 +28,8 @@ dependencies = [
     "matplotlib (>=3.9,<4)",
     "boto3 (>=1.35,<2)",
     "evidently (==0.7.23)",
+    "fastapi (>=0.165.0,<0.166.0)",
+    "uvicorn[standard] (>=0.54.0,<0.55.0)",
 ]
 
 [tool.poetry]
@@ -38,13 +40,14 @@ pytest = "^8.3"
 pytest-cov = ">=5.0"
 black = ">=24.8"
 flake8 = "^7.1"
-mypy = "^1.11"
+mypy = ">=1.15"
 pre-commit = ">=3.8"
 types-PyYAML = "^6.0"
 pandas-stubs = ">=2.2"
 jupyter = "^1.1.1"
 nbconvert = "^7.17.2"
 ipykernel = "^7.4.0"
+httpx = "^0.28.1"
 
 [build-system]
 requires = ["poetry-core>=2.0"]
