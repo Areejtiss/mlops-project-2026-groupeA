@@ -213,7 +213,7 @@ Acceptation par tranche, champion : <30 ans 46,9 %, 30-50 ans 63,9 %, ≥50 ans 
 
 ## 6. Pourquoi des alias plutôt que Staging / Production
 
-- Le SYNOPSIS prévoyait « promotion Staging → Production ». **MLflow a déprécié les stages** (depuis la 2.9). La version utilisée, MLflow 3.17, recommande les **alias** et les tags [C2 §1].
+- Le SYNOPSIS prévoyait « promotion Staging → Production ». **Les stages sont dépréciés dans MLflow** et ne sont pas utilisés ; la version utilisée, MLflow 3.17, s'appuie sur les **alias** et les tags [C2 §1].
 - **Deux alias :** `champion` (servi par l'API : `models:/crediscore@champion`) et `challenger` (candidat).
 - **Avantages :**
   - l'API ne change jamais d'URI : déplacer l'alias suffit à servir le nouveau modèle ;
