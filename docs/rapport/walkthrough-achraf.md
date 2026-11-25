@@ -58,7 +58,7 @@ Pour chaque module : ce qu'il fait, le choix de conception clé et pourquoi, pui
 
 ## `models/registry.py` — enregistrement
 
-- **Fait :** `--select` choisit le meilleur run `train` (même fichier d'entraînement, mêmes coûts et contraintes, AUC ≥ 0,75 si possible, coût de validation minimal), l'enregistre comme version de `crediscore` et copie les tags. Alias `champion` s'il n'y en a pas, sinon `challenger`.
+- **Fait :** `--select` choisit le meilleur run `train` (même fichier d'entraînement, mêmes coûts et contraintes, AUC ≥ 0,75 si possible, coût de validation minimal), l'enregistre comme version de `crediscore` et copie les tags. Toujours alias `challenger`, même le premier modèle : seul `promote` pose `champion`. Code 3 si le run choisi est déjà le champion (rien à faire).
 - **Choix :** **alias plutôt que stages** (dépréciés). Le run gagnant d'une expérience (`no_age`) n'est pas enregistré sans `--allow-experiment`.
 - **Q : Différence Tracking / Registry ?** Le Tracking garde les runs (paramètres, métriques, artefacts). Le Registry donne un nom, des versions et des alias aux modèles retenus.
 - **Q : Pourquoi filtrer sur `train_data_hash` ?** Comparer des runs entraînés sur des données différentes n'aurait pas de sens.
@@ -71,7 +71,7 @@ Pour chaque module : ce qu'il fait, le choix de conception clé et pourquoi, pui
   - **échec fermé** : lot trop petit, ancre absente, seuils différents des tags, ou erreur → refus ;
   - ordre d'écriture tags → suppression de `challenger` → déplacement de `champion` → `promoted_at` : une panne laisse l'ancien champion en service.
 - **Q : Comment revenir à la version précédente ?** Remettre l'alias `champion` sur la version notée dans `promotion_previous_champion` ; l'API recharge `models:/crediscore@champion`.
-- **Q : Pourquoi pas le test pour promouvoir ?** Il a servi à mesurer le champion. Le hold-out (20 000 lignes hors échantillon) n'a été lu par aucune sélection.
+- **Q : Pourquoi pas le test pour promouvoir ?** Il a servi à mesurer le champion. Le hold-out (20 000 lignes hors échantillon) n'a été lu par aucune sélection : il est frais au départ, mais réutilisé à chaque promotion, donc à renouveler périodiquement (un vrai lot de production étiqueté).
 - **Q : La boucle marche-t-elle ?** Oui : test de bout en bout sur un MLflow sqlite, et exécution réelle le 25/11 (v2 promue, `promotion_previous_champion = 1`).
 
 ## `data/holdout.py` — lot de promotion (pour relecture d'Areej)
@@ -87,7 +87,7 @@ Pour chaque module : ce qu'il fait, le choix de conception clé et pourquoi, pui
 - **Choix :** c'est la seule source des chiffres d'équité, utilisée par `evaluate`, `promote` et la dérive (lot 6).
 - **Q : Pourquoi le sexe n'est-il pas une variable ?** C'est un attribut protégé : il ne sert qu'à mesurer l'équité. Un test vérifie que changer `CODE_GENDER` ne change rien au score.
 - **Q : Pourquoi l'égalité des chances ?** Elle compare des clients qui ont **réellement** remboursé : l'écart ne s'explique pas par un risque différent.
-- **Q : Pourquoi ne pas retirer l'âge ?** Sans `AGE_YEARS`, l'écart d'âge monte (33,1 → 35,6 pts) et le coût aussi : l'âge passe par d'autres variables.
+- **Q : Pourquoi ne pas retirer l'âge ?** Sans `AGE_YEARS`, l'écart d'âge monte (33,1 → 35,6 pts) et le coût aussi. Lecture probable, non prouvée : l'âge passe par d'autres variables (ancienneté d'emploi, `DAYS_*`, famille).
 
 ## `explain/shap_explainer.py` — SHAP
 
@@ -100,7 +100,7 @@ Pour chaque module : ce qu'il fait, le choix de conception clé et pourquoi, pui
 
 - **Fait :** KS (numériques), χ² (catégorielles), PSI écrit à la main, `drift_share`, `auc_drop` ; règle d'alerte du contrat 4 ; HTML Evidently. Depuis le lot 6 : `prediction` (PSI des probabilités, taux d'acceptation) et `fairness` (audit du lot courant, statut D5), informatifs.
 - **Choix :**
-  - bins PSI en **intervalles**, dont les bornes ne tombent jamais sur une valeur réelle (bug corrigé : 1e-9 de décalage donnait un PSI de 2,97) ;
+  - bins PSI en **intervalles**, dont les bornes ne tombent jamais sur une valeur réelle (bug corrigé : 1e-9 de décalage, sans dérive, donnait un PSI d'environ 2,9 sur le revenu) ;
   - gardes des petits lots (500 lignes ; 1 000 lignes labellisées et 50 défauts) ;
   - le cœur reste pur : le CLI charge le modèle et passe les résultats.
 - **Q : Pourquoi l'alerte alors que l'AUC ne baisse que de 0,009 sur la crise ?** Les entrées dérivent (revenus, ratios), mais pas les scores externes ni les labels : dérive des données, pas de concept. L'acceptation baisse pourtant de 4,85 pts.
@@ -120,4 +120,4 @@ Pour chaque module : ce qu'il fait, le choix de conception clé et pourquoi, pui
 - **Data drift ou concept drift ?** Data drift : la distribution des entrées change (crise : revenus, crédits). Concept drift : la relation entrées → défaut change (scénario C : les labels d'un secteur changent, les entrées non). Le premier se voit sans labels (PSI, KS, χ²) ; le second demande des labels (`auc_drop`).
 - **Pourquoi le concept drift est-il difficile à détecter en crédit ?** Le label (défaut ou non) n'arrive que des mois après l'octroi. On surveille donc d'abord les entrées et les prédictions (`prediction` : PSI des scores, taux d'acceptation), et l'AUC quand les labels arrivent (au moins 1 000 lignes labellisées).
 - **Quel test pour une numérique, et pour une catégorielle ?** Kolmogorov-Smirnov pour les numériques, χ² pour les catégorielles, avec α = 0,05, chez nous comme dans le rapport Evidently. Nuance : le « chi-square » d'Evidently est un test d'adéquation aux proportions de la référence, le nôtre un test d'indépendance à deux échantillons.
-- **Que faites-vous quand une dérive est détectée ?** `alert = true` dans le JSON → jauge Prometheus → le `monitoring_flow` lance le `training_flow`. On réentraîne avec les paramètres figés, on enregistre un `challenger`, et on le promeut seulement s'il bat le champion sans dégrader l'équité. Sinon, on garde le modèle actuel.
+- **Que faites-vous quand une dérive est détectée ?** `alert = true` dans le JSON → le `monitoring_flow` lance le `training_flow` (si les données ont changé) ; en parallèle, jauge `drift_alert` pour Iyed (affichage, pas déclencheur). On réentraîne avec les paramètres figés, on enregistre un `challenger`, et on le promeut seulement s'il bat le champion sans dégrader l'équité. Sinon, on garde le modèle actuel.
