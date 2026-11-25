@@ -661,7 +661,7 @@ Stop point: a short review before it is wired into Prefect.
   - **I3** Prometheus alerts on an `alert` gauge (0/1) and an `auc_drop` gauge; per-feature rules, if any, only on `psi{feature=~"<key_features>"}`; no new JSON key.
   - **Minor 1** a feature empty on one side only counts as drifted (KS p = 0); `null` only when both sides are empty. **Minor 2** empty batch → `ValueError("empty batch…")`. **Minor 3** naive `now` → `ValueError`; timestamp without microseconds.
 
-**Lot 5 status (2026-11-24): review round 2 verdict "ready" (minor corrections only, done).** Round 1 was NOT READY; correction pass done. Branch `feature/drift-detection`, built on lot 3 in progress (rebase on lot 3's final tip pending).
+**Lot 5 status (2026-11-24): review round 2 verdict "ready" (minor corrections only, done).** Round 1 was NOT READY; correction pass done. Branch `feature/drift-detection`, built on lot 3 in progress, then stacked on 2026-11-25: `feature/model-registry` ⊂ `feature/explainability-fairness` ⊂ `feature/drift-detection`.
 - [x] 1. Contract 4 written and revised (`docs/contracts/04-drift-report.md`, French), **proposal for Areej and Iyed**.
 - [x] 2. `monitoring/drift.py`: `psi`, `ks_test`, `chi2_test`, `drift_share`, `is_alert`, `auc_drop`, `compute_drift_report`, `write_html`, CLI `main`. `monitoring:` in `params.yaml` + `MonitoringConfig` with `min_rows`, `min_labelled` and `min_positives` (each key feature must be a model feature), "(for Areej's review)".
 - [x] 3. Tests: `tests/test_psi.py` (25), `tests/test_drift.py` (63), 14 new in `test_config.py`.
@@ -695,6 +695,15 @@ Stop point: a short review before it is wired into Prefect.
   - Own correction-pass set (`scratchpad/lot5/fix/mutate_v2.py`): round 1 (`mutation_own_v2.log`, 122 passed unmutated): **43 valid, 41 killed, 2 survived** (constant pad without `max(…, 1)`, edge side `left`), both killed by two new tests. Round 2 on the final HEAD (`mutation_own_v2_round2.log`, 124 passed unmutated): **43 valid, 43 killed, 0 survived**.
 - **Review round 2: ready.** The reviewer's campaign on the new lines (32 mutants, `rl5/probes2/mutate2.py`) gave 29 killed and 3 survivors: #17 (`n_rows` from the current batch only), #20 (`min_rows` hard-coded) and #22 (`min_labelled` hard-coded). Three tests now cover them: a 300-row reference against a 2 000-row shifted current gives no alert; the small-batch guard follows `min_rows` and `auc_drop` follows `min_labelled`, both changed through `params.model_copy`. Replay of the reviewer's script, copied, on a `git archive` copy of the HEAD with those tests (129 passed unmutated): **32 valid, 32 killed, 0 survived** (log `scratchpad/lot5/fix2/mutation_reviewer2_replay.log` of the session).
 - Checks: black, flake8 and mypy clean; **428 tests pass** (326 before the lot), coverage 93 %, `drift.py` 99 % (the `__main__` line), `config.py` 100 %.
+- **Re-run with lot 3's champion (2026-11-25, after stacking lot 3 → lot 4 → lot 5):** `models/model.joblib` from `dvc repro -s train` (md5 `66def444…`, the model of `reports/metrics.json`, never trained on the test split), same batches (crisis `drift.seed = 7`; halves and scenario C rebuilt with the same script and seed 42). Data-drift numbers are unchanged (they do not use the model); only `auc_drop` moves, old (2026-10-25 local artifact) → new:
+
+  | Current vs reference | AUC reference → current | auc_drop | alert |
+  |---|---|---|---|
+  | Economic crisis vs test | 0.816 → 0.784 ⇒ **0.747 → 0.738** | 0.033 → **0.009** (now below 0.03) | true (now from the key PSI only) |
+  | Test half B vs half A | ⇒ 0.749 → 0.744 | 0.003 → 0.005 | false |
+  | Scenario C vs test | 0.816 → 0.654 ⇒ **0.747 → 0.621** | 0.162 → **0.126** | true |
+
+  The caveat above on AUC levels no longer applies: these levels are the champion's. Contract 4 §8 updated.
 
 ### Lot 6 — S7: closing the loop (with Areej) · ~6 h
 
