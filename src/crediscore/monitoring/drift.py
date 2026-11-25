@@ -9,15 +9,23 @@ Usage:
         --reference data/processed/test.parquet
         --current data/simulated/economic_crisis.parquet
         [--model models | --model models:/crediscore@champion]
+        [--metrics reports/metrics.json]
         [--out-dir reports/drift] [--params params.yaml]
     -> writes <out-dir>/<YYYY-MM-DD_HHMMSS>.json and .html (Evidently, UTC
        time of the report) and <out-dir>/latest.json (same JSON). The exit
        code is 0 whatever the alert: the alert lives in the JSON.
+    With --model, the report also carries `prediction` (prediction drift)
+    and `fairness` (audit of the labelled current batch, D5 status against
+    the age anchor of --metrics); without it, both are null. Neither one
+    raises the alert.
 
 In code:
-    report = compute_drift_report(reference, current, params,
-                                  auc_drop=auc_drop(model, reference, current,
-                                                    params))
+    report = compute_drift_report(
+        reference, current, params,
+        auc_drop=auc_drop(model, reference, current, params),
+        prediction=prediction_drift(model, th, reference, current, params),
+        fairness=fairness_drift(model, th, current, params, age_anchor_pts=38.7),
+    )
 """
 
 import argparse
@@ -36,10 +44,25 @@ from scipy import stats
 from sklearn.metrics import roc_auc_score
 
 from crediscore.config import MonitoringConfig, Params, load_params
-from crediscore.models.evaluate import load_model
+from crediscore.fairness.audit import GENDER_COL, d5_checks
+from crediscore.models.cost import ACCEPT
+from crediscore.models.evaluate import fairness, load_model
+from crediscore.models.promote import read_age_anchor
+from crediscore.models.threshold import decide
 from crediscore.models.train import prepare_xy
 
-REPORT_KEYS = ("timestamp", "drift_share", "psi", "ks", "chi2", "auc_drop", "alert")
+# Contract 4. `prediction` and `fairness` (lot 6) come last, null without model.
+REPORT_KEYS = (
+    "timestamp",
+    "drift_share",
+    "psi",
+    "ks",
+    "chi2",
+    "auc_drop",
+    "alert",
+    "prediction",
+    "fairness",
+)
 # Floor of a bin share in the PSI, so that an empty bin gives a finite term.
 EPSILON = 1e-4
 _NAN_BIN = -1
@@ -243,19 +266,127 @@ def auc_drop(
     """
     aucs = []
     for batch in (reference, current):
-        if params.target not in batch:
+        labelled = _labelled(batch, params)
+        if labelled is None:
             return None
-        labelled = batch.dropna(subset=[params.target])
         X, y = prepare_xy(labelled, params)
-        positives = int(y.sum())
-        if (
-            len(y) < params.monitoring.min_labelled
-            or positives < params.monitoring.min_positives
-            or positives == len(y)
-        ):
-            return None
         aucs.append(roc_auc_score(y, model.predict_proba(X)[:, 1]))
     return float(aucs[0] - aucs[1])
+
+
+def _labelled(batch: pd.DataFrame, params: Params) -> pd.DataFrame | None:
+    """The labelled rows, or None when too few for a stable number.
+
+    None without the label column, below `monitoring.min_labelled` labelled
+    rows or `monitoring.min_positives` defaults, or with a single class.
+    """
+    if params.target not in batch:
+        return None
+    labelled = batch.dropna(subset=[params.target])
+    positives = int((labelled[params.target] == 1).sum())
+    if (
+        len(labelled) < params.monitoring.min_labelled
+        or positives < params.monitoring.min_positives
+        or positives == len(labelled)
+    ):
+        return None
+    return labelled
+
+
+def _proba(model: Any, batch: pd.DataFrame, params: Params) -> npt.NDArray[Any]:
+    """Probability of default on a batch, label or not (numerics as float64)."""
+    X = batch[params.features.all].copy()
+    X[params.features.numeric] = X[params.features.numeric].astype("float64")
+    return np.asarray(model.predict_proba(X)[:, 1], dtype=float)
+
+
+def prediction_drift(
+    model: Any,
+    thresholds: Mapping[str, float],
+    reference: pd.DataFrame,
+    current: pd.DataFrame,
+    params: Params,
+) -> dict[str, float]:
+    """Prediction drift (L6-1): the model's outputs, current vs reference.
+
+    Needs no label. Same PSI as the features (`monitoring.psi_bins`, bins on
+    the reference); only ACCEPTE counts as accepted (D8).
+
+    Args:
+        model: Fitted classifier with `predict_proba` (contract 2 artifact).
+        thresholds: The model's thresholds.json (`low`, `high`).
+        reference: Reference batch with `params.features.all`.
+        current: Current batch with the same columns.
+        params: Validated parameters.
+
+    Returns:
+        psi_proba, acceptance_rate_ref, acceptance_rate_cur (shares in
+        [0, 1]) and acceptance_rate_delta_pts (current - reference, points).
+    """
+    p_ref, p_cur = _proba(model, reference, params), _proba(model, current, params)
+    low, high = thresholds["low"], thresholds["high"]
+    acc_ref = float(np.mean(decide(p_ref, low, high) == ACCEPT))
+    acc_cur = float(np.mean(decide(p_cur, low, high) == ACCEPT))
+    return {
+        "psi_proba": psi(
+            pd.Series(p_ref), pd.Series(p_cur), params.monitoring.psi_bins
+        ),
+        "acceptance_rate_ref": acc_ref,
+        "acceptance_rate_cur": acc_cur,
+        "acceptance_rate_delta_pts": 100 * (acc_cur - acc_ref),
+    }
+
+
+def fairness_drift(
+    model: Any,
+    thresholds: Mapping[str, float],
+    current: pd.DataFrame,
+    params: Params,
+    *,
+    age_anchor_pts: float | None,
+) -> dict[str, Any] | None:
+    """Fairness over time (L6-2): the audit of the current batch.
+
+    The model's decisions on the labelled current rows, audited like
+    `evaluate` does (gender XNA excluded, age bands), with the D5 status
+    under the `params.promotion` tolerances. Informative: never an alert.
+
+    Args:
+        model: Fitted classifier with `predict_proba`.
+        thresholds: The model's thresholds.json (`low`, `high`).
+        current: Current batch, labelled or not.
+        params: Validated parameters.
+        age_anchor_pts: The baseline's age equal-opportunity gap (from
+            evaluate's metrics.json), None if unknown.
+
+    Returns:
+        n_labelled, gender and age (`evaluate.fairness` fields), and d5
+        ({age_anchor_pts, checks, pass}, None without an anchor). None when
+        the batch has no CODE_GENDER, or fails the `auc_drop` label guard.
+    """
+    labelled = _labelled(current, params) if GENDER_COL in current else None
+    if labelled is None:
+        return None
+    p = _proba(model, labelled, params)
+    fair = fairness(
+        labelled,
+        decide(p, thresholds["low"], thresholds["high"]),
+        target=params.target,
+    )
+    d5 = None
+    if age_anchor_pts is not None:
+        checks = d5_checks(
+            fair,
+            age_anchor_pts=age_anchor_pts,
+            max_gender_gap_pts=params.promotion.max_gender_gap_pts,
+            age_gap_margin_pts=params.promotion.age_gap_margin_pts,
+        )
+        d5 = {
+            "age_anchor_pts": age_anchor_pts,
+            "checks": checks,
+            "pass": all(c["pass"] for c in checks.values()),
+        }
+    return {"n_labelled": len(labelled), **fair, "d5": d5}
 
 
 def compute_drift_report(
@@ -264,6 +395,8 @@ def compute_drift_report(
     params: Params,
     *,
     auc_drop: float | None = None,
+    prediction: dict[str, float] | None = None,
+    fairness: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Drift report of `current` against `reference` (contract 4).
@@ -276,6 +409,9 @@ def compute_drift_report(
         current: Current batch with the same columns.
         params: Validated parameters.
         auc_drop: Result of `auc_drop`, None without labels.
+        prediction: Result of `prediction_drift`, None without a model.
+        fairness: Result of `fairness_drift`, None without a model or labels.
+            Neither one changes the alert.
         now: Report time, timezone-aware; defaults to now. Written in UTC,
             ISO 8601, to the second.
 
@@ -314,6 +450,8 @@ def compute_drift_report(
             cfg,
             n_rows=min(len(reference), len(current)),
         ),
+        "prediction": prediction,
+        "fairness": fairness,
     }
 
 
@@ -358,6 +496,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--reference", type=Path, required=True)
     parser.add_argument("--current", type=Path, required=True)
     parser.add_argument("--model", help="train output dir or models:/ URI")
+    parser.add_argument(
+        "--metrics",
+        type=Path,
+        default=Path("reports/metrics.json"),
+        help="evaluate output: the age anchor of the D5 status (with --model)",
+    )
     parser.add_argument("--out-dir", type=Path, default=Path("reports/drift"))
     parser.add_argument("--params", type=Path, default=Path("params.yaml"))
     args = parser.parse_args(argv)
@@ -365,12 +509,16 @@ def main(argv: list[str] | None = None) -> None:
     params = load_params(args.params)
     reference = pd.read_parquet(args.reference)
     current = pd.read_parquet(args.current)
-    drop = (
-        auc_drop(load_model(args.model)[0], reference, current, params)
-        if args.model
-        else None
+    drop, pred, fair = None, None, None
+    if args.model:
+        model, th = load_model(args.model)
+        drop = auc_drop(model, reference, current, params)
+        pred = prediction_drift(model, th, reference, current, params)
+        anchor = read_age_anchor(args.metrics)
+        fair = fairness_drift(model, th, current, params, age_anchor_pts=anchor)
+    report = compute_drift_report(
+        reference, current, params, auc_drop=drop, prediction=pred, fairness=fair
     )
-    report = compute_drift_report(reference, current, params, auc_drop=drop)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.fromisoformat(report["timestamp"]).strftime("%Y-%m-%d_%H%M%S")
@@ -383,6 +531,17 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Wrote {args.out_dir / stamp}.json/.html and latest.json")
     print(f"  drift_share {report['drift_share']:.3f}  auc_drop {drop}")
     print("  top PSI " + ", ".join(f"{f} {v:.3f}" for f, v in top))
+    if pred is not None:
+        print(
+            f"  prediction: psi_proba {pred['psi_proba']:.3f}, acceptance "
+            f"{pred['acceptance_rate_ref']:.3f} -> {pred['acceptance_rate_cur']:.3f}"
+        )
+    if fair is not None:
+        d5 = fair["d5"]["pass"] if fair["d5"] else None
+        print(
+            f"  fairness: gender gap {fair['gender']['raw_gap_pts']:.1f} pts, age EO "
+            f"gap {fair['age']['eo_gap_pts']:.1f} pts, D5 pass {d5}"
+        )
     print(f"  alert {report['alert']}")
 
 
