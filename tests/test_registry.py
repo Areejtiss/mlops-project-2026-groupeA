@@ -54,6 +54,22 @@ def test_cost_ties_are_broken_by_auc() -> None:
     assert select_run(runs, CONFIG)["run_id"] == "b"
 
 
+def test_a_full_tie_prefers_the_given_champion_run() -> None:
+    # A retrain on unchanged data ties exactly with the champion's run: the
+    # champion is kept (registry then exits 3), whatever the listing order.
+    runs = [cand("new", 0.77, 0.30), cand("champ", 0.77, 0.30)]
+    assert select_run(runs, CONFIG, prefer="champ")["run_id"] == "champ"
+    assert select_run(runs[::-1], CONFIG, prefer="champ")["run_id"] == "champ"
+    assert select_run(runs, CONFIG)["run_id"] == "new"  # no preference: first
+
+
+def test_the_champion_preference_never_beats_a_better_run() -> None:
+    runs = [cand("champ", 0.77, 0.31), cand("better", 0.77, 0.30)]
+    assert select_run(runs, CONFIG, prefer="champ")["run_id"] == "better"
+    runs = [cand("champ", 0.76, 0.30), cand("better", 0.77, 0.30)]
+    assert select_run(runs, CONFIG, prefer="champ")["run_id"] == "better"
+
+
 def test_runs_breaking_the_d3_d8_constraints_are_excluded() -> None:
     runs = [
         cand("low_recall", 0.80, 0.10, recall=0.64),

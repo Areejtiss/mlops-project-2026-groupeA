@@ -119,3 +119,12 @@ def test_drift_alert_retrain_registry_promote_moves_the_aliases(
         registry.main([*p, "--select", "--train", "train_v2.parquet"])
     assert again.value.code == 3
     assert aliases() == {"champion": "2"}
+    # Even if the flow retrains on the same file anyway, the new run ties
+    # with the champion's: the champion is kept, exit 3, no new version.
+    train.main([*p, "--train", "train_v2.parquet", "--output-dir", "m3"])
+    with pytest.raises(SystemExit) as tie:
+        registry.main([*p, "--select", "--train", "train_v2.parquet"])
+    assert tie.value.code == 3
+    assert aliases() == {"champion": "2"}
+    versions = mlflow.MlflowClient().search_model_versions(f"name='{MODEL_NAME}'")
+    assert len(versions) == 2
