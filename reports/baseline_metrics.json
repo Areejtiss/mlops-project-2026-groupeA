@@ -1,0 +1,203 @@
+{
+  "note": "Baseline LogReg, local split (D1), derived features computed locally until Areej's add_derived_features lands. Thresholds tuned on val.",
+  "data": {
+    "rows": 100000,
+    "train": 64000,
+    "val": 16000,
+    "test": 20000,
+    "seed": 42
+  },
+  "costs": {
+    "cost_fn": 5.0,
+    "cost_fp": 1.0,
+    "cost_review": 0.3
+  },
+  "constraints": {
+    "min_recall": 0.65,
+    "max_review_share": 0.15
+  },
+  "quality": {
+    "raw_val": {
+      "roc_auc": 0.7393,
+      "pr_auc": 0.2239,
+      "brier": 0.2063
+    },
+    "raw_test": {
+      "roc_auc": 0.7461,
+      "pr_auc": 0.2279,
+      "brier": 0.2025
+    },
+    "cal_val": {
+      "roc_auc": 0.7385,
+      "pr_auc": 0.2133,
+      "brier": 0.0689
+    },
+    "cal_test": {
+      "roc_auc": 0.7464,
+      "pr_auc": 0.2196,
+      "brier": 0.0685
+    }
+  },
+  "policies_val": {
+    "accept_all": {
+      "low": 1.001,
+      "high": 1.001,
+      "cost": 6460.0,
+      "cost_per_file": 0.4037,
+      "recall": 0.0,
+      "recall_margin": -0.65,
+      "review_share": 0.0,
+      "accept_share": 1.0
+    },
+    "single_threshold": {
+      "low": 0.1707,
+      "high": 0.1707,
+      "cost": 5568.0,
+      "cost_per_file": 0.348,
+      "recall": 0.3754,
+      "recall_margin": -0.2746,
+      "review_share": 0.0,
+      "accept_share": 0.8739
+    },
+    "single_threshold_recall65": {
+      "low": 0.0926,
+      "high": 0.0926,
+      "cost": 6692.0,
+      "cost_per_file": 0.4183,
+      "recall": 0.6618,
+      "recall_margin": 0.0118,
+      "review_share": 0.0,
+      "accept_share": 0.6649
+    },
+    "three_zones_unconstrained": {
+      "low": 0.0571,
+      "high": 0.75,
+      "cost": 3671.8,
+      "cost_per_file": 0.2295,
+      "recall": 0.7988,
+      "recall_margin": 0.1488,
+      "review_share": 0.4941,
+      "accept_share": 0.5058
+    },
+    "three_zones_D3": {
+      "low": 0.0926,
+      "high": 0.1378,
+      "cost": 5325.9,
+      "cost_per_file": 0.3329,
+      "recall": 0.6618,
+      "recall_margin": 0.0118,
+      "review_share": 0.1421,
+      "accept_share": 0.6649
+    }
+  },
+  "policies_test": {
+    "accept_all": {
+      "low": 1.001,
+      "high": 1.001,
+      "cost": 8075.0,
+      "cost_per_file": 0.4037,
+      "recall": 0.0,
+      "recall_margin": -0.65,
+      "review_share": 0.0,
+      "accept_share": 1.0
+    },
+    "single_threshold": {
+      "low": 0.1707,
+      "high": 0.1707,
+      "cost": 6798.0,
+      "cost_per_file": 0.3399,
+      "recall": 0.3858,
+      "recall_margin": -0.2642,
+      "review_share": 0.0,
+      "accept_share": 0.877
+    },
+    "single_threshold_recall65": {
+      "low": 0.0926,
+      "high": 0.0926,
+      "cost": 8189.0,
+      "cost_per_file": 0.4094,
+      "recall": 0.665,
+      "recall_margin": 0.015,
+      "review_share": 0.0,
+      "accept_share": 0.6721
+    },
+    "three_zones_unconstrained": {
+      "low": 0.0571,
+      "high": 0.75,
+      "cost": 4581.2,
+      "cost_per_file": 0.2291,
+      "recall": 0.7944,
+      "recall_margin": 0.1444,
+      "review_share": 0.4867,
+      "accept_share": 0.5132
+    },
+    "three_zones_D3": {
+      "low": 0.0926,
+      "high": 0.1378,
+      "cost": 6495.6,
+      "cost_per_file": 0.3248,
+      "recall": 0.665,
+      "recall_margin": 0.015,
+      "review_share": 0.1416,
+      "accept_share": 0.6721
+    }
+  },
+  "fairness_test": {
+    "three_zones_D3": {
+      "gender": {
+        "raw_gap_pts": 7.81,
+        "equal_opportunity_gap_pts": 6.56,
+        "acceptance_by_group": {
+          "F": 0.6988,
+          "M": 0.6207
+        },
+        "acceptance_good_payers_by_group": {
+          "F": 0.7235,
+          "M": 0.6579
+        }
+      },
+      "age_band": {
+        "raw_gap_pts": 34.45,
+        "equal_opportunity_gap_pts": 32.94,
+        "acceptance_by_group": {
+          "<30": 0.443,
+          "30-50": 0.6595,
+          "≥50": 0.7875
+        },
+        "acceptance_good_payers_by_group": {
+          "<30": 0.4751,
+          "30-50": 0.6922,
+          "≥50": 0.8045
+        }
+      }
+    },
+    "single_threshold": {
+      "gender": {
+        "raw_gap_pts": 5.94,
+        "equal_opportunity_gap_pts": 4.51,
+        "acceptance_by_group": {
+          "F": 0.8972,
+          "M": 0.8378
+        },
+        "acceptance_good_payers_by_group": {
+          "F": 0.915,
+          "M": 0.8699
+        }
+      },
+      "age_band": {
+        "raw_gap_pts": 22.19,
+        "equal_opportunity_gap_pts": 19.01,
+        "acceptance_by_group": {
+          "<30": 0.7232,
+          "30-50": 0.8747,
+          "≥50": 0.9451
+        },
+        "acceptance_good_payers_by_group": {
+          "<30": 0.7642,
+          "30-50": 0.8994,
+          "≥50": 0.9544
+        }
+      }
+    }
+  }
+}

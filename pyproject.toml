@@ -18,6 +18,16 @@ dependencies = [
     "kaggle (>=1.6)",
     "dvc[s3] (>=3.55,<4.0)",
     "python-dotenv (>=1.0)",
+    "scikit-learn (>=1.6,<2)",
+    "mlflow (>=3.0,<4)",
+    "lightgbm (>=4.5,<5)",
+    "xgboost (>=3.0,<4)",
+    "shap (>=0.46,<1)",
+    "optuna (>=4.0,<6)",
+    "scipy (>=1.14,<2)",
+    "matplotlib (>=3.9,<4)",
+    "boto3 (>=1.35,<2)",
+    "evidently (==0.7.23)",
     "fastapi (>=0.165.0,<0.166.0)",
     "uvicorn[standard] (>=0.54.0,<0.55.0)",
 ]
@@ -34,6 +44,9 @@ mypy = ">=1.15"
 pre-commit = ">=3.8"
 types-PyYAML = "^6.0"
 pandas-stubs = ">=2.2"
+jupyter = "^1.1.1"
+nbconvert = "^7.17.2"
+ipykernel = "^7.4.0"
 httpx = "^0.28.1"
 
 [build-system]
@@ -52,7 +65,7 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 # Libraries without type hints
-module = ["kaggle.*"]
+module = ["kaggle.*", "sklearn.*", "shap.*", "scipy.*", "boto3.*", "evidently.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
