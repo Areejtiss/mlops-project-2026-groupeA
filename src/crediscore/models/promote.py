@@ -1,9 +1,12 @@
 """Challenger -> champion promotion gate (T7, D5, L4-1).
 
 `models:/crediscore@challenger` and `models:/crediscore@champion` are scored
-on THE SAME fresh labelled batch (`--data`, required: a production or
-simulated batch, never the test split except for a manual demo where it is
-named explicitly), each with its own thresholds.json (authoritative; its
+on THE SAME fresh labelled batch (`--data`, required): the `holdout` stage's
+`data/processed/holdout.parquet` (raw rows outside the featurize sample) or a
+real production batch. Never the test split (except a manual demo where it
+is named explicitly), and never `data/simulated/economic_crisis.parquet`: it
+reuses test rows, so it is a drift-detection demo only. Each model uses
+its own thresholds.json (authoritative; its
 version tags must match it). The challenger becomes champion iff all of these
 hold (bounds inclusive):
 - auc: challenger ROC-AUC >= champion ROC-AUC;
@@ -34,7 +37,7 @@ Exit code: 0 if the decision is "promote" (also with --dry-run), else 1.
 
 Usage:
     poetry run python -m crediscore.models.promote
-        --data data/simulated/economic_crisis.parquet       (one line)
+        --data data/processed/holdout.parquet       (one line)
     poetry run python -m crediscore.models.promote --dry-run
         --data <batch.parquet> --output reports/promotion.json
 
@@ -303,7 +306,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--params", type=Path, default=Path("params.yaml"))
     parser.add_argument(
-        "--data", type=Path, required=True, help="fresh labelled batch, not test"
+        "--data",
+        type=Path,
+        required=True,
+        help="fresh labelled batch: data/processed/holdout.parquet or production"
+        " (not test, not the crisis batch)",
     )
     parser.add_argument("--metrics", type=Path, default=Path("reports/metrics.json"))
     parser.add_argument("--output", type=Path, default=Path("reports/promotion.json"))
