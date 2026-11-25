@@ -49,18 +49,25 @@ def test_drift_alert_retrain_registry_promote_moves_the_aliases(
     pd.concat([frame.iloc[:1500], current]).to_parquet("train_v2.parquet")
     frame.iloc[5500:].to_parquet("holdout.parquet")
 
-    # Bootstrap: first model, no champion yet -> it becomes champion.
+    # Bootstrap: the first model is a challenger like any other; promote
+    # gates it on fairness alone (no champion yet), exit 0 = deploy.
     train.main([*p, "--train", "train_v1.parquet", "--output-dir", "m1"])
     registry.main([*p, "--select", "--train", "train_v1.parquet"])
-    assert aliases() == {"champion": "1"}
+    assert aliases() == {"challenger": "1"}
     evaluate.main(
         [*p, "--model", "m1", "--train", "train_v1.parquet"]
         + ["--test", "test.parquet", "--output", "metrics.json"]
     )
     promo = [*p, "--data", "holdout.parquet", "--metrics", "metrics.json"]
-    assert promote.main([*promo, "--output", "promotion0.json"]) == 1
+    assert promote.main([*promo, "--output", "promotion0.json"]) == 0
     first = json.loads(Path("promotion0.json").read_text(encoding="utf-8"))
-    assert first["failed"] == ["no_challenger"]  # keep the current model
+    assert first["champion_version"] is None and "auc" not in first["checks"]
+    assert aliases() == {"champion": "1"}
+    # Same data again: the selected run is the champion's, nothing to do.
+    with pytest.raises(SystemExit) as nothing:
+        registry.main([*p, "--select", "--train", "train_v1.parquet"])
+    assert nothing.value.code == 3
+    assert aliases() == {"champion": "1"}
 
     # 1. detect_drift: alert -> retrain.
     drift.main(
@@ -100,3 +107,9 @@ def test_drift_alert_retrain_registry_promote_moves_the_aliases(
     tags = mlflow.MlflowClient().get_model_version(MODEL_NAME, "2").tags
     assert tags["promotion_previous_champion"] == "1"
     assert "promoted_at" in tags
+
+    # Drift persists but the data has not changed: no endless re-promotion.
+    with pytest.raises(SystemExit) as again:
+        registry.main([*p, "--select", "--train", "train_v2.parquet"])
+    assert again.value.code == 3
+    assert aliases() == {"champion": "2"}

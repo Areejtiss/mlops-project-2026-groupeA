@@ -242,10 +242,20 @@ def run_main(
     return code, json.loads(out.read_text(encoding="utf-8"))
 
 
-def register_pair(champion: str, challenger: str) -> None:
+def register_champion(model_type: str) -> str:
+    """Register a run (always @challenger) and make it champion, as a first
+    promotion would."""
     client = mlflow.MlflowClient()
-    assert register(client, run_ids()[champion])[1] == "champion"
-    assert register(client, run_ids()[challenger])[1] == "challenger"
+    version, alias = register(client, run_ids()[model_type])
+    assert alias == "challenger"
+    client.set_registered_model_alias(MODEL_NAME, "champion", version)
+    client.delete_registered_model_alias(MODEL_NAME, "challenger")
+    return version
+
+
+def register_pair(champion: str, challenger: str) -> None:
+    register_champion(champion)
+    assert register(mlflow.MlflowClient(), run_ids()[challenger])[1] == "challenger"
 
 
 def test_same_model_as_challenger_is_promoted_with_aliases_and_tags(
@@ -343,15 +353,19 @@ def test_both_models_are_scored_on_the_batch_with_their_own_thresholds(
 def test_no_champion_yet_promotes_on_the_fairness_gates(
     store: Path, tmp_path: Path
 ) -> None:
-    register_pair("logreg", "lightgbm")
-    mlflow.MlflowClient().delete_registered_model_alias(MODEL_NAME, "champion")
+    # The first model ever is registered @challenger like any other (L6 fix 2):
+    # promote gates it on fairness alone, and exit 0 means "deploy".
+    assert register(mlflow.MlflowClient(), run_ids()["lightgbm"]) == (
+        "1",
+        "challenger",
+    )
     code, decision = run_main(store, tmp_path)
     assert code == 0, decision["failed"]
     assert decision["champion_version"] is None
     assert decision["scores"]["champion"] is None
     assert "auc" not in decision["checks"]
-    assert aliases() == {"champion": "2"}
-    tags = mlflow.MlflowClient().get_model_version(MODEL_NAME, "2").tags
+    assert aliases() == {"champion": "1"}
+    tags = mlflow.MlflowClient().get_model_version(MODEL_NAME, "1").tags
     assert tags["promotion_previous_champion"] == "none"
 
 
@@ -370,7 +384,7 @@ def test_missing_age_anchor_fails_closed(
 @pytest.mark.parametrize("registered", [False, True])
 def test_no_challenger_exits_1(store: Path, tmp_path: Path, registered: bool) -> None:
     if registered:
-        register(mlflow.MlflowClient(), run_ids()["logreg"])  # champion only
+        register_champion("logreg")  # champion only
     code, decision = run_main(store, tmp_path)
     assert code == 1
     assert decision["failed"] == ["no_challenger"]
@@ -465,7 +479,7 @@ def test_single_gender_batch_fails_closed(store: Path, tmp_path: Path) -> None:
 def test_challenger_that_is_already_champion_is_a_no_op(
     store: Path, tmp_path: Path
 ) -> None:
-    register(mlflow.MlflowClient(), run_ids()["lightgbm"])
+    register_champion("lightgbm")
     mlflow.MlflowClient().set_registered_model_alias(MODEL_NAME, "challenger", "1")
     code, decision = run_main(store, tmp_path)
     assert (code, decision["failed"]) == (1, ["already_champion"])

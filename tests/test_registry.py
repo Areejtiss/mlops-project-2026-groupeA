@@ -187,21 +187,57 @@ def runs_by_model() -> dict[str, mlflow.entities.Run]:
     return {r.data.tags["model_type"]: r for r in runs}
 
 
-def test_first_registration_is_champion_then_challenger(store: Path) -> None:
+def aliases() -> dict[str, str]:
+    model = mlflow.MlflowClient().get_registered_model(MODEL_NAME)
+    return {k: str(v) for k, v in model.aliases.items()}
+
+
+def test_registration_is_always_challenger(store: Path) -> None:
+    # Even the first model: promote gates it (fairness only), never registry.
     runs = runs_by_model()
     client = mlflow.MlflowClient()
-    v1, alias1 = register(client, runs["logreg"].info.run_id)
-    assert (v1, alias1) == ("1", "champion")
-    v2, alias2 = register(client, runs["lightgbm"].info.run_id)
-    assert (v2, alias2) == ("2", "challenger")
-    model = client.get_registered_model(MODEL_NAME)
-    assert {k: str(v) for k, v in model.aliases.items()} == {
-        "champion": "1",
-        "challenger": "2",
-    }
-    assert client.get_model_version_by_alias(MODEL_NAME, "champion").run_id == (
-        runs["logreg"].info.run_id
+    assert register(client, runs["logreg"].info.run_id) == ("1", "challenger")
+    assert aliases() == {"challenger": "1"}
+    client.set_registered_model_alias(MODEL_NAME, "champion", "1")
+    assert register(client, runs["lightgbm"].info.run_id) == ("2", "challenger")
+    assert aliases() == {"champion": "1", "challenger": "2"}
+    assert client.get_model_version_by_alias(MODEL_NAME, "challenger").run_id == (
+        runs["lightgbm"].info.run_id
     )
+
+
+def test_main_select_exits_3_when_the_selected_run_is_already_champion(
+    store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = ["--select", "--train", str(store / "train.parquet"), "--allow-experiment"]
+    registry.main(args)
+    client = mlflow.MlflowClient()
+    client.set_registered_model_alias(MODEL_NAME, "champion", "1")  # promoted
+    client.delete_registered_model_alias(MODEL_NAME, "challenger")
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exit_info:
+        registry.main(args)
+    assert exit_info.value.code == 3
+    assert "nothing to register: selected run is already champion" in (
+        capsys.readouterr().out
+    )
+    assert [v.version for v in client.search_model_versions()] == ["1"]
+    assert aliases() == {"champion": "1"}
+
+
+def test_main_select_registers_when_the_champion_is_another_run(
+    store: Path,
+) -> None:
+    runs = runs_by_model()
+    client = mlflow.MlflowClient()
+    expected = select_run([registry.candidate(r) for r in runs.values()], CONFIG)
+    other = next(r for r in runs.values() if r.info.run_id != expected["run_id"])
+    register(client, other.info.run_id)
+    client.set_registered_model_alias(MODEL_NAME, "champion", "1")
+    registry.main(
+        ["--select", "--train", str(store / "train.parquet"), "--allow-experiment"]
+    )
+    assert aliases() == {"champion": "1", "challenger": "2"}
 
 
 def test_version_tags_are_copied_exactly(store: Path) -> None:
@@ -227,10 +263,10 @@ def test_version_tags_are_copied_exactly(store: Path) -> None:
     assert tags["shap_unit"] == "log_odds"
 
 
-def test_registered_champion_loads_with_the_alias(store: Path) -> None:
+def test_registered_challenger_loads_with_the_alias(store: Path) -> None:
     client = mlflow.MlflowClient()
     register(client, runs_by_model()["logreg"].info.run_id)
-    model = mlflow.sklearn.load_model(f"models:/{MODEL_NAME}@champion")
+    model = mlflow.sklearn.load_model(f"models:/{MODEL_NAME}@challenger")
     params = load_params(PARAMS_FILE)
     X, _ = train_module.prepare_xy(make_synthetic_frame(params, n=50), params)
     assert model.predict_proba(X).shape == (50, 2)
@@ -252,8 +288,8 @@ def test_main_select_registers_the_selected_run(store: Path) -> None:
     registry.main(
         ["--select", "--train", str(store / "train.parquet"), "--allow-experiment"]
     )
-    champion = client.get_model_version_by_alias(MODEL_NAME, "champion")
-    assert champion.run_id == expected["run_id"]
+    challenger = client.get_model_version_by_alias(MODEL_NAME, "challenger")
+    assert challenger.run_id == expected["run_id"]
 
 
 def test_main_select_ignores_runs_on_other_data(
@@ -300,7 +336,7 @@ def test_main_run_id_registers_that_run(store: Path) -> None:
     run_id = runs_by_model()["lightgbm"].info.run_id
     registry.main(["--run-id", run_id])
     client = mlflow.MlflowClient()
-    assert client.get_model_version_by_alias(MODEL_NAME, "champion").run_id == run_id
+    assert client.get_model_version_by_alias(MODEL_NAME, "challenger").run_id == run_id
 
 
 def test_no_experiment_means_no_candidate(
