@@ -440,3 +440,94 @@ stages:
       hash: md5
       md5: cfb8beb6bbfe9d5ea149e10274ceee6d
       size: 5312
+  holdout:
+    cmd: python -m crediscore.data.holdout
+    deps:
+    - path: data/processed/features.parquet
+      hash: md5
+      md5: 3fc5e474f6888f0387ef2d6bb339a4ed
+      size: 5882922
+    - path: data/raw/application_train.csv
+      hash: md5
+      md5: 793a017f41fbac1dc28176b26dbab30e
+      size: 166133370
+    - path: src/crediscore/config.py
+      hash: md5
+      md5: d7a44651617c159d1930af70112f9e26
+      size: 5237
+    - path: src/crediscore/data/featurize.py
+      hash: md5
+      md5: 6159f7bdf3ac5be4b8ac396ba4497462
+      size: 6038
+    - path: src/crediscore/data/holdout.py
+      hash: md5
+      md5: 05e35c269eb67b73e55ae68abd7c2602
+      size: 2734
+    - path: src/crediscore/data/sampling.py
+      hash: md5
+      md5: 1f4853431dba72187f52c989d0a11884
+      size: 1424
+    - path: src/crediscore/data/schema.py
+      hash: md5
+      md5: dcf7d96d3c258ccefff6d12df2cda5d0
+      size: 1743
+    params:
+      params.yaml:
+        data.holdout_size: 20000
+        data.missing_threshold: 0.6
+        data.processed_dir: data/processed
+        data.random_state: 42
+        data.raw_path: data/raw/application_train.csv
+        features:
+          numeric:
+          - AMT_INCOME_TOTAL
+          - AMT_CREDIT
+          - AMT_ANNUITY
+          - AMT_GOODS_PRICE
+          - EXT_SOURCE_1
+          - EXT_SOURCE_2
+          - EXT_SOURCE_3
+          - CNT_CHILDREN
+          - CNT_FAM_MEMBERS
+          - REGION_POPULATION_RELATIVE
+          - REGION_RATING_CLIENT_W_CITY
+          - DAYS_REGISTRATION
+          - DAYS_ID_PUBLISH
+          - DAYS_LAST_PHONE_CHANGE
+          - REG_CITY_NOT_WORK_CITY
+          - LIVE_CITY_NOT_WORK_CITY
+          - FLAG_WORK_PHONE
+          - FLAG_PHONE
+          - FLAG_DOCUMENT_3
+          - OBS_30_CNT_SOCIAL_CIRCLE
+          - DEF_30_CNT_SOCIAL_CIRCLE
+          - AMT_REQ_CREDIT_BUREAU_YEAR
+          - TOTALAREA_MODE
+          - ANNUITY_INCOME_RATIO
+          - CREDIT_INCOME_RATIO
+          - CREDIT_TERM
+          - AGE_YEARS
+          - EMPLOYED_YEARS
+          - DAYS_EMPLOYED_ANOM
+          - EXT_SOURCE_MISSING_COUNT
+          - IS_THIN_FILE
+          categorical:
+          - NAME_CONTRACT_TYPE
+          - NAME_INCOME_TYPE
+          - NAME_EDUCATION_TYPE
+          - NAME_FAMILY_STATUS
+          - NAME_HOUSING_TYPE
+          - OCCUPATION_TYPE
+          - FLAG_OWN_CAR
+          - FLAG_OWN_REALTY
+          - NAME_TYPE_SUITE
+          - ORGANIZATION_TYPE
+        id_col: SK_ID_CURR
+        sensitive_cols:
+        - CODE_GENDER
+        target: TARGET
+    outs:
+    - path: data/processed/holdout.parquet
+      hash: md5
+      md5: 8bc410e828b2db35adcdcd61366f0b55
+      size: 1477905
