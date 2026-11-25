@@ -10,7 +10,7 @@
 poetry run python -m crediscore.monitoring.drift \
     --reference data/processed/test.parquet \
     --current data/simulated/economic_crisis.parquet \
-    [--model models/lightgbm | --model models:/crediscore@champion] \
+    [--model models | --model models:/crediscore@champion] \
     [--out-dir reports/drift] [--params params.yaml]
 ```
 
@@ -94,11 +94,11 @@ Seuils : `monitoring.min_rows`, `monitoring.drift_share_alert`, `monitoring.psi_
 
 ## 8. Exemple réel
 
-Produit par la **CLI avec `--model models/lightgbm`** (pas par l'étape DVC, qui tourne sans modèle et donne donc `auc_drop` = `null`) : lot « crise économique » d'Areej (`drift.seed = 7`) contre `data/processed/test.parquet`, 20 000 lignes chacun. Le modèle est un artefact de travail local : ses niveaux d'AUC ne font pas foi, seule la baisse compte. Valeurs arrondies pour la lecture ; le fichier réel garde la précision complète.
+Produit par la **CLI avec `--model models`** (pas par l'étape DVC, qui tourne sans modèle et donne donc `auc_drop` = `null`) : lot « crise économique » d'Areej (`drift.seed = 7`) contre `data/processed/test.parquet`, 20 000 lignes chacun. Le modèle est le **champion du lot 3** (`models/model.joblib` de `dvc repro -s train`, md5 `66def444…`, celui de `reports/metrics.json`) : AUC 0,747 sur le test, 0,738 sur la crise (recalculé le 25/11/2026 ; l'ancien exemple venait d'un artefact local du 25/10/2026). Valeurs arrondies pour la lecture ; le fichier réel garde la précision complète.
 
 ```json
 {
-  "timestamp": "2026-11-24T21:33:35+00:00",
+  "timestamp": "2026-11-25T00:14:29+00:00",
   "drift_share": 0.1707,
   "psi": {
     "AMT_INCOME_TOTAL": 0.2624,
@@ -188,11 +188,11 @@ Produit par la **CLI avec `--model models/lightgbm`** (pas par l'étape DVC, qui
     "NAME_TYPE_SUITE": 1.0,
     "ORGANIZATION_TYPE": 1.0
   },
-  "auc_drop": 0.0328,
+  "auc_drop": 0.0092,
   "alert": true
 }
 ```
 
-Lecture : 7 features dérivées sur 41 (`drift_share` 0,171, sous 0,30), mais PSI ≥ 0,20 sur trois features clés (revenu 0,26, crédit 0,23, ratio annuité/revenu 0,68) et `auc_drop` 0,033 au-dessus de 0,03 : `alert = true`. `EXT_SOURCE_2`, que le simulateur ne touche pas, reste à 0.
+Lecture : 7 features dérivées sur 41 (`drift_share` 0,171, sous 0,30), mais PSI ≥ 0,20 sur trois features clés (revenu 0,26, crédit 0,23, ratio annuité/revenu 0,68) : `alert = true`. `auc_drop` 0,009 reste **sous** 0,03 : le champion classe presque aussi bien les dossiers de la crise ; l'alerte vient de la dérive des données, pas de la performance. `EXT_SOURCE_2`, que le simulateur ne touche pas, reste à 0.
 
-Pour comparaison (mêmes commandes, chiffres dans le plan, lot 5) : deux moitiés aléatoires du test l'une contre l'autre donnent `drift_share` 0,024, PSI max 0,011 (`ORGANIZATION_TYPE`), `auc_drop` 0,003, `alert = false` ; le scénario C (30 % des labels « Commercial associate » inversés) donne `drift_share` 0, tous les PSI à 0, `auc_drop` 0,162, `alert = true` : seule l'AUC voit une dérive de concept.
+Pour comparaison (mêmes commandes et même champion, chiffres dans le plan, lot 5) : deux moitiés aléatoires du test l'une contre l'autre donnent `drift_share` 0,024, PSI max 0,011 (`ORGANIZATION_TYPE`), `auc_drop` 0,005, `alert = false` ; le scénario C (30 % des labels « Commercial associate » inversés) donne `drift_share` 0, tous les PSI à 0, `auc_drop` 0,126 (AUC 0,747 → 0,621), `alert = true` : seule l'AUC voit une dérive de concept.

@@ -8,7 +8,7 @@ Usage:
     poetry run python -m crediscore.monitoring.drift
         --reference data/processed/test.parquet
         --current data/simulated/economic_crisis.parquet
-        [--model models/lightgbm | --model models:/crediscore@champion]
+        [--model models | --model models:/crediscore@champion]
         [--out-dir reports/drift] [--params params.yaml]
     -> writes <out-dir>/<YYYY-MM-DD_HHMMSS>.json and .html (Evidently, UTC
        time of the report) and <out-dir>/latest.json (same JSON). The exit
