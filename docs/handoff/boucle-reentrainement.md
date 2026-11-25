@@ -3,7 +3,7 @@
 - **Pour :** Areej (`flows/monitoring_flow.py`, `flows/training_flow.py`, `prefect.yaml`), Iyed (déploiement Blue/Green après promotion).
 - **Statut :** proposition du 25/11/2026, à relire par Areej et Iyed. Les flows Prefect n'existent pas encore : ce document donne la **séquence exacte de commandes**, leurs **codes de sortie** et les **fichiers** à lire, pour que les flows n'aient qu'à les enchaîner. Le câblage Prefect (tâches, retries, CRON, `run_deployment`) est le travail d'Areej.
 - **Preuve que la chaîne marche :**
-  - `tests/test_monitoring_loop.py` : la séquence complète (premier modèle promu par `promote` → alerte de dérive → réentraînement → `registry --select` → `promote` → alias, puis code 3 quand rien n'a changé) sur un MLflow sqlite et des données synthétiques, en environ 15 s ;
+  - `tests/test_monitoring_loop.py` : la séquence complète (premier modèle promu par `promote` → alerte de dérive → réentraînement → `registry --select` → `promote` → alias, puis code 3 quand rien n'a changé) sur un MLflow sqlite et des données synthétiques, en environ 20 s ;
   - exécution réelle du 25/11/2026 sur un serveur MLflow jetable (section 6).
 
 ## 1. Prérequis
@@ -57,7 +57,7 @@ Remarques sur chaque étape :
 
 | Cas | Ce qui se passe | Que faire dans le flow |
 |---|---|---|
-| Fichier d'entraînement **inchangé** | Le flow ne lance pas le `training_flow` (garde sur `train_data_hash`, section 2). Sans la garde : si `--select` choisit le run du champion, `registry` sort avec le **code 3** ; mais un nouveau run identique peut gagner à égalité (le plus récent, constaté le 25/11, section 6), être promu sur égalité, et la boucle recommencerait à chaque passage | Garde obligatoire ; code 3 = fin du flow, pas de déploiement |
+| Fichier d'entraînement **inchangé** | Le flow ne lance pas le `training_flow` (garde sur `train_data_hash`, section 2). Sans la garde, le nouveau run est identique à celui du champion : à égalité parfaite (coût et AUC), `--select` garde le **run du champion**, donc `registry` sort avec le **code 3** sans rien enregistrer (rejoué le 25/11 : deux cycles, une seule version). La garde évite surtout un entraînement inutile | Garde recommandée ; code 3 = fin du flow, pas de déploiement |
 | Challenger meilleur mais **injuste** | `promote` : code 1, `failed: ["age_eo_gap"]` (par exemple), alias inchangés : le challenger reste `challenger` | Garder le modèle actuel ; signaler à l'équipe. Le test de bout en bout le montre sur données synthétiques |
 | Lot de promotion trop petit | `batch_too_small` (< 5 000 lignes) ou `gender_groups_missing` (< 2 groupes de 500) | Code 1 ; attendre un lot plus grand |
 | Toute erreur (MLflow injoignable, fichier absent…) | `promote` écrit `failed: ["error", "<message>"]`, code 1 ; rien n'a changé, sauf si la panne arrive en cours d'écriture (ligne suivante, contrat 2 §1) | Retry Prefect possible |
@@ -141,7 +141,9 @@ Serveur jetable sqlite sur le port 5341 (jamais celui de l'équipe), arrêté ap
 1. v1 `champion` = le champion du lot 3. L'amorçage documenté (section 1) est `train` avec les paramètres figés sur `train.parquet`, puis `registry --select` et `promote` ; la relecture des lots 6-7 l'a rejoué et a obtenu le même modèle (validation AUC 0,7670, mêmes seuils, mêmes chiffres de dérive ci-dessous). Lors de notre exécution, `models/model.joblib` avait été enregistré directement par un script jetable, avant que `registry` ne passe toujours par `@challenger` ;
 2. dérive, lot « crise économique » contre `test.parquet` avec `--model models:/crediscore@champion` : `drift_share` 0,171, PSI ratio annuité/revenu 0,676, revenu 0,262, crédit 0,231, `auc_drop` 0,009, **`alert = true`** ; `prediction` : `psi_proba` 0,031, acceptation 67,3 % → 62,5 % ; `fairness` : D5 respecté ;
 3. `train --model lightgbm --model-params configs/champion_model_params.json` sur `train.parquet` : validation AUC 0,7670, coût 0,3070 par dossier (mêmes chiffres que le champion, données inchangées) ;
-4. `registry --select` : deux candidats à égalité, le run le plus récent est choisi, **v2 `challenger`**. C'est la boucle sans fin corrigée depuis : la garde sur `train_data_hash` n'aurait pas lancé ce réentraînement ;
+4. `registry --select` : deux candidats à égalité, le run le plus récent est choisi, **v2 `challenger`**. C'est la boucle sans fin corrigée depuis : la garde sur `train_data_hash` n'aurait pas lancé ce réentraînement, et `--select` garde désormais le run du champion sur une égalité parfaite (code 3) ;
 5. `promote --data data/processed/holdout.parquet` : **code 0, promu** (AUC 0,7591 = 0,7591, coût 0,3141 = 0,3141, sexe 7,9 / 6,9 pts, âge en égalité des chances 32,2 ≤ 40,7) ; Registry ensuite : **`champion` → v2**, plus d'alias `challenger`, v2 porte `promotion_previous_champion = 1` et `promoted_at`.
 
 Le challenger est ici le même modèle que le champion (mêmes données, mêmes paramètres, entraînement déterministe) : la vérification prouve la **chaîne**, pas un gain. Un vrai gain demande des données rafraîchies (étape 2).
+
+**Rejeu après correction (25/11/2026, serveur jetable, port 5341, arrêté ensuite)** : amorçage `train` → `registry --select` (**v1 `@challenger`**) → `promote` (**code 0**, équité seule : sexe 7,9 / 6,9 pts, âge en égalité des chances 32,2 ≤ 40,7) → `champion` = v1 ; dérive de la crise : `alert = true` ; réentraînement sur le même `train.parquet` puis `registry --select` : égalité, run du champion gardé, **code 3**, `nothing to register: selected run is already champion` ; un second cycle donne encore le code 3. À la fin : une seule version, `champion` = v1.
