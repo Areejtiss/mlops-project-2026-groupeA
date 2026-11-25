@@ -47,7 +47,7 @@ from crediscore.config import MonitoringConfig, Params, load_params
 from crediscore.fairness.audit import GENDER_COL, d5_checks
 from crediscore.models.cost import ACCEPT
 from crediscore.models.evaluate import fairness, load_model
-from crediscore.models.promote import read_age_anchor
+from crediscore.models.promote import gender_groups_ok, read_age_anchor
 from crediscore.models.threshold import decide
 from crediscore.models.train import prepare_xy
 
@@ -361,8 +361,12 @@ def fairness_drift(
 
     Returns:
         n_labelled, gender and age (`evaluate.fairness` fields), and d5
-        ({age_anchor_pts, checks, pass}, None without an anchor). None when
-        the batch has no CODE_GENDER, or fails the `auc_drop` label guard.
+        ({age_anchor_pts, checks, pass, reason}, None without an anchor).
+        With fewer than 2 gender groups (XNA excluded) of
+        `promotion.min_group_rows` labelled rows, as in `promote`, there is
+        no verdict: pass None, reason "gender_groups_missing" (checks and
+        gaps still published); otherwise reason None. None when the batch
+        has no CODE_GENDER, or fails the `auc_drop` label guard.
     """
     labelled = _labelled(current, params) if GENDER_COL in current else None
     if labelled is None:
@@ -381,10 +385,12 @@ def fairness_drift(
             max_gender_gap_pts=params.promotion.max_gender_gap_pts,
             age_gap_margin_pts=params.promotion.age_gap_margin_pts,
         )
+        groups = gender_groups_ok(labelled, params.promotion.min_group_rows)
         d5 = {
             "age_anchor_pts": age_anchor_pts,
             "checks": checks,
-            "pass": all(c["pass"] for c in checks.values()),
+            "pass": all(c["pass"] for c in checks.values()) if groups else None,
+            "reason": None if groups else "gender_groups_missing",
         }
     return {"n_labelled": len(labelled), **fair, "d5": d5}
 

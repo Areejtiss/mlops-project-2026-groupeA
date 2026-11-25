@@ -173,10 +173,19 @@ def batch_check(df: pd.DataFrame, promotion: PromotionConfig) -> str | None:
     """
     if len(df) < promotion.min_rows:
         return "batch_too_small"
-    sizes = df[GENDER_COL][df[GENDER_COL] != GENDER_EXCLUDED].value_counts()
-    if int((sizes >= promotion.min_group_rows).sum()) < 2:
+    if not gender_groups_ok(df, promotion.min_group_rows):
         return "gender_groups_missing"
     return None
+
+
+def gender_groups_ok(df: pd.DataFrame, min_group_rows: int) -> bool:
+    """True if at least 2 gender groups (XNA excluded) have min_group_rows rows.
+
+    Below that a gender gap compares nothing (one group gives 0) or is too
+    noisy. Also used by the drift report's D5 status (lot 6).
+    """
+    sizes = df[GENDER_COL][df[GENDER_COL] != GENDER_EXCLUDED].value_counts()
+    return int((sizes >= min_group_rows).sum()) >= 2
 
 
 def thresholds_match(client: MlflowClient, version: str, th: dict[str, Any]) -> bool:
