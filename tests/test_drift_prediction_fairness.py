@@ -202,8 +202,64 @@ def test_fairness_drift_d5_status_against_the_anchor(
         "age_anchor_pts": 38.7,
         "checks": checks,
         "pass": all(c["pass"] for c in checks.values()),
+        "reason": None,
     }
     assert out["d5"]["checks"]["age_eo_gap"]["limit"] == pytest.approx(40.7)
+
+
+def with_min_group_rows(params: Params, n: int) -> Params:
+    promotion = params.promotion.model_copy(update={"min_group_rows": n})
+    return params.model_copy(update={"promotion": promotion})
+
+
+@pytest.mark.parametrize("gender", ["F", "XNA"])
+def test_fairness_drift_d5_without_two_gender_groups_has_no_verdict(
+    synthetic_frame: pd.DataFrame, params: Params, gender: str
+) -> None:
+    # All F: a gender gap of 0 would "pass" without any comparison. All XNA:
+    # no group at all (XNA never counts, as in promote).
+    one = synthetic_frame.assign(CODE_GENDER=gender)
+    out = fairness_drift(Ext2Model(), TH, one, params, age_anchor_pts=38.7)
+    assert out is not None and out["d5"] is not None
+    assert out["d5"]["pass"] is None
+    assert out["d5"]["reason"] == "gender_groups_missing"
+    assert out["d5"]["age_anchor_pts"] == 38.7
+    assert out["gender"]["raw_gap_pts"] == 0.0  # gaps still published
+    assert "age_eo_gap" in out["d5"]["checks"]
+    assert out["age"]["eo_gap_pts"] > 0
+
+
+def test_fairness_drift_gender_groups_follow_min_group_rows(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    smaller = int(synthetic_frame["CODE_GENDER"].value_counts().min())
+    at = with_min_group_rows(params, smaller)
+    above = with_min_group_rows(params, smaller + 1)
+    ok = fairness_drift(Ext2Model(), TH, synthetic_frame, at, age_anchor_pts=38.7)
+    no = fairness_drift(Ext2Model(), TH, synthetic_frame, above, age_anchor_pts=38.7)
+    assert ok is not None and ok["d5"]["reason"] is None  # bound inclusive
+    assert isinstance(ok["d5"]["pass"], bool)
+    assert no is not None and no["d5"]["reason"] == "gender_groups_missing"
+    assert no["d5"]["pass"] is None
+
+
+def test_fairness_drift_counts_gender_groups_on_labelled_rows_without_xna(
+    synthetic_frame: pd.DataFrame, params: Params
+) -> None:
+    n_m = int((synthetic_frame["CODE_GENDER"] == "M").sum())
+    rules = with_min_group_rows(params, n_m)
+    df = synthetic_frame.copy()
+    m_rows = df.index[df["CODE_GENDER"] == "M"]
+    df.loc[m_rows[:1], params.target] = np.nan  # one M row loses its label
+    out = fairness_drift(Ext2Model(), TH, df, rules, age_anchor_pts=38.7)
+    assert out is not None and out["d5"]["reason"] == "gender_groups_missing"
+    extra = pd.concat(
+        [synthetic_frame, synthetic_frame.iloc[:5].assign(CODE_GENDER="XNA")]
+    )
+    out = fairness_drift(
+        Ext2Model(), TH, extra, with_min_group_rows(params, n_m), age_anchor_pts=38.7
+    )
+    assert out is not None and out["d5"]["reason"] is None
 
 
 def test_fairness_drift_d5_fails_when_one_check_fails(
@@ -449,3 +505,18 @@ def test_cli_without_model_has_null_prediction_and_fairness(
     latest = run_cli(batches, tmp_path, "--metrics", str(batches / "metrics.json"))
     assert latest["prediction"] is None
     assert latest["fairness"] is None
+
+
+def test_cli_metrics_defaults_to_reports_metrics_json_of_the_cwd(
+    batches: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "metrics.json").write_text(
+        json.dumps({"baseline": {"fairness": {"age": {"eo_gap_pts": 21.5}}}})
+    )
+    (tmp_path / "metrics.json").write_text(
+        json.dumps({"baseline": {"fairness": {"age": {"eo_gap_pts": 99.0}}}})
+    )
+    monkeypatch.chdir(tmp_path)
+    latest = run_cli(batches, tmp_path / "out", "--model", str(batches / "model"))
+    assert latest["fairness"]["d5"]["age_anchor_pts"] == 21.5
