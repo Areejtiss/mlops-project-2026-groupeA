@@ -2,6 +2,7 @@
 
 - **Propriétaires :** Achraf (calcul, `src/crediscore/monitoring/drift.py`) et Areej (lots dérivés, `monitoring_flow`). **Consommateurs :** Iyed (jauges Prometheus), Areej (`monitoring_flow` : réentraînement si alerte).
 - **Statut :** **proposition du 24/11/2026, révisée après relecture le même jour, en attente de relecture par Areej et Iyed.** Tout changement passe par une PR relue par les deux autres membres.
+- **Ajout du 25/11/2026 (lot 6), proposition pour relecture d'Areej et d'Iyed :** deux clés **optionnelles**, `prediction` et `fairness`, ajoutées **à la fin** du JSON (section 9). Elles valent `null` sans `--model`. Elles ne changent **pas** la règle d'alerte.
 - **Paramètres :** section `monitoring:` de `params.yaml` (nouvelle, PR pour Areej). Elle est distincte de `drift:`, qui configure le simulateur d'Areej.
 
 ## 1. Produire le rapport
@@ -11,8 +12,11 @@ poetry run python -m crediscore.monitoring.drift \
     --reference data/processed/test.parquet \
     --current data/simulated/economic_crisis.parquet \
     [--model models | --model models:/crediscore@champion] \
+    [--metrics reports/metrics.json] \
     [--out-dir reports/drift] [--params params.yaml]
 ```
+
+`--metrics` (lot 6) : le `metrics.json` d'`evaluate`, d'où est lue l'ancre d'âge D5 de la section 9 ; utilisé seulement avec `--model`.
 
 - Écrit `<out-dir>/<AAAA-MM-JJ_HHMMSS>.json` (ce contrat), `<out-dir>/<AAAA-MM-JJ_HHMMSS>.html` (rapport Evidently) et `<out-dir>/latest.json` (copie du dernier JSON). L'horodatage du nom est celui du champ `timestamp`, en **UTC**.
 - Code de sortie **0 quelle que soit l'alerte** : l'alerte est dans le JSON. Un code non nul signale une vraie erreur : fichier absent, colonne manquante, lot vide (`ValueError("empty batch…")`). Un lot labellisé d'une seule classe n'est **pas** une erreur : `auc_drop` vaut alors `null` (section 2).
@@ -21,7 +25,7 @@ poetry run python -m crediscore.monitoring.drift \
 
 ## 2. Champs
 
-Les clés sont **exactement** celles-ci, dans cet ordre. JSON strict : pas de `NaN`, pas d'`Infinity`.
+Les clés sont **exactement** celles-ci, dans cet ordre, suivies des deux clés du lot 6 (`prediction`, `fairness`, section 9), toujours présentes, `null` quand elles ne sont pas calculées. JSON strict : pas de `NaN`, pas d'`Infinity`.
 
 | Champ | Type | Unité / domaine | Définition |
 |---|---|---|---|
@@ -196,3 +200,59 @@ Produit par la **CLI avec `--model models`** (pas par l'étape DVC, qui tourne s
 Lecture : 7 features dérivées sur 41 (`drift_share` 0,171, sous 0,30), mais PSI ≥ 0,20 sur trois features clés (revenu 0,26, crédit 0,23, ratio annuité/revenu 0,68) : `alert = true`. `auc_drop` 0,009 reste **sous** 0,03 : le champion classe presque aussi bien les dossiers de la crise ; l'alerte vient de la dérive des données, pas de la performance. `EXT_SOURCE_2`, que le simulateur ne touche pas, reste à 0.
 
 Pour comparaison (mêmes commandes et même champion, chiffres dans le plan, lot 5) : deux moitiés aléatoires du test l'une contre l'autre donnent `drift_share` 0,024, PSI max 0,011 (`ORGANIZATION_TYPE`), `auc_drop` 0,005, `alert = false` ; le scénario C (30 % des labels « Commercial associate » inversés) donne `drift_share` 0, tous les PSI à 0, `auc_drop` 0,126 (AUC 0,747 → 0,621), `alert = true` : seule l'AUC voit une dérive de concept.
+
+## 9. Ajouts du lot 6 : dérive des prédictions et équité dans le temps (proposition, pour relecture d'Areej et d'Iyed)
+
+Deux clés **optionnelles**, ajoutées **après `alert`** (les sept clés existantes gardent leur ordre et leur sens). Elles sont **toujours présentes** dans le JSON, et valent **`null`** quand elles ne sont pas calculées : un consommateur teste `is None`, il ne teste jamais l'absence de la clé. Choix : des clés fixes restent la règle du contrat (section 2). Ni l'une ni l'autre ne **change la règle d'alerte** (section 5) : elles sont informatives, publiées pour les jauges d'Iyed et le rapport.
+
+### 9.1 `prediction` (dérive des prédictions)
+
+`null` sans `--model`. Avec `--model`, calculé sur **toutes** les lignes des deux lots (pas besoin de label) :
+
+| Champ | Type | Définition |
+|---|---|---|
+| `psi_proba` | nombre ≥ 0 | PSI des probabilités de défaut du modèle, lot courant contre référence, **même méthode** que pour les features (section 4, `monitoring.psi_bins`, bornes sur la référence). Les probabilités isotoniques sont en paliers : le dédoublonnage des quantiles s'applique |
+| `acceptance_rate_ref` | nombre dans [0, 1] | Part de `ACCEPTE` sur la référence, avec les seuils du `thresholds.json` du modèle (D8 : `A_ETUDIER` n'est pas accepté) |
+| `acceptance_rate_cur` | nombre dans [0, 1] | Idem sur le lot courant |
+| `acceptance_rate_delta_pts` | nombre | `100 × (acceptance_rate_cur − acceptance_rate_ref)`, en points ; négatif = le modèle accepte moins |
+
+### 9.2 `fairness` (équité dans le temps)
+
+`null` sans `--model`, sans colonne `TARGET` ou `CODE_GENDER` dans le lot courant, ou quand les lignes labellisées du lot courant ne passent pas **la même garde que `auc_drop`** : moins de `monitoring.min_labelled` (1 000) lignes labellisées, moins de `monitoring.min_positives` (50) défauts, ou une seule classe. Sinon : audit `crediscore.fairness.audit` (le même que `evaluate`) sur les lignes **labellisées** du lot courant, avec les **décisions du modèle** (seuils de son `thresholds.json`).
+
+| Champ | Type | Définition |
+|---|---|---|
+| `n_labelled` | entier | Lignes labellisées auditées |
+| `gender` | objet | `raw_gap_pts`, `eo_gap_pts` (points), `acceptance_by_group`, `acceptance_good_payers_by_group` (parts), `excluded_rows` (`XNA` ou vide) : exactement les champs de `reports/metrics.json` |
+| `age` | objet | Mêmes champs, tranches `<30`, `30-50`, `≥50` |
+| `d5` | objet ou `null` | `{age_anchor_pts, checks, pass, reason}` : les trois conditions D5 (`gender_raw_gap`, `gender_eo_gap`, `age_eo_gap`, chacune `{value, limit, pass}`, bornes incluses, tolérances `params.promotion`) contre l'ancre d'âge lue dans `--metrics` (`baseline.fairness.age.eo_gap_pts`) ; `pass` = les trois, `reason` = `null`. **Sans comparaison possible selon le sexe** (moins de 2 groupes de sexe, `XNA` exclu, ayant chacun au moins `promotion.min_group_rows` = 500 lignes labellisées : la règle de `promote`) : `pass` = `null`, `reason` = `"gender_groups_missing"`, `checks` et écarts toujours publiés (un seul groupe donnerait un écart de 0, donc un faux « respecté »). `d5` = `null` si le fichier ou l'ancre manque |
+
+Un `d5.pass = false` n'est **pas** une alerte et ne déclenche aucun réentraînement : c'est un signal pour l'équipe (et le rapport). La promotion, elle, refuse toujours un challenger qui échoue D5 (contrat 2 §1).
+
+### 9.3 Qui lit quoi (ajout à la section 6)
+
+| Consommateur | Lit | Proposition |
+|---|---|---|
+| Iyed, `monitoring/metrics.py` | `prediction`, `fairness` | Jauges `drift_psi_proba`, `acceptance_rate` (le SYNOPSIS la cite) depuis `acceptance_rate_cur`, `fairness_gap_pts{group="gender"\|"age", kind="raw"\|"eo"}`, `fairness_d5_pass` (0/1). Jauge absente quand la clé vaut `null`. **Pas de règle d'alerte** dessus |
+| Areej, `monitoring_flow` | rien de plus | La décision de réentraîner reste `alert` |
+
+### 9.4 Exemple réel (25/11/2026)
+
+Même commande que la section 8, sur un serveur MLflow jetable (`--model models:/crediscore@champion`, `--metrics reports/metrics.json`). Le champion y est obtenu par l'amorçage documenté (passation, `docs/handoff/boucle-reentrainement.md`) : `train` avec les paramètres figés sur `train.parquet`, puis `registry --select` et `promote`. C'est le même modèle que `models/model.joblib` (entraînement déterministe : AUC de validation 0,7670, mêmes seuils) ; la relecture des lots 6-7 a rejoué cet amorçage et retrouvé les mêmes chiffres. Les sept premières clés sont identiques à la section 8 :
+
+```json
+"prediction": {
+  "psi_proba": 0.0305,
+  "acceptance_rate_ref": 0.67315,
+  "acceptance_rate_cur": 0.62465,
+  "acceptance_rate_delta_pts": -4.85
+},
+"fairness": {
+  "n_labelled": 20000,
+  "gender": {"raw_gap_pts": 7.77, "eo_gap_pts": 6.46, "...": "..."},
+  "age": {"raw_gap_pts": 35.46, "eo_gap_pts": 34.00, "...": "..."},
+  "d5": {"age_anchor_pts": 38.675, "checks": {"age_eo_gap": {"value": 34.00, "limit": 40.675, "pass": true}, "...": "..."}, "pass": true, "reason": null}
+}
+```
+
+Lecture : la crise ne déplace presque pas la distribution des scores (`psi_proba` 0,03, « stable »), mais le modèle **accepte 4,85 points de dossiers en moins** (67,3 % → 62,5 %) : les revenus baissent et l'endettement monte, les scores glissent juste au-dessus du seuil `low`. L'équité reste dans D5 (sexe 7,8 / 6,5 pts ; âge en égalité des chances 34,0 pts, limite 40,7). `acceptance_rate_ref` = 0,67315 est exactement l'`accept_share` du champion sur le test dans `reports/metrics.json`.
