@@ -6,7 +6,7 @@
 
 - **Base read:** branch `dev` = `main` = `0de3860` (2026-10-11); `origin/feat/iyed-serving-cicd` = `91e5e1b` (2026-10-24, CI only, not merged).
 - **Owner:** Achraf Gharbi. **Written:** 2026-10-24.
-- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2), age rule anchored to the baseline the same day. Lot 2 implemented 2026-10-25 (see "Lot 2 progress"); `dvc.yaml` train stage deferred until Areej's pipeline exists. Lot 3 implemented 2026-11-24 (see "Lot 3 progress"): champion LightGBM v1 registered; test ROC-AUC, PR-AUC and the −15 % cost KPI missed, reported with their gaps.  Lot 4 implemented 2026-11-24 (see "Lot 4 progress"), with the promotion gate made relative (L4-1).
+- **Status:** v2. Plan review on 2026-10-24 gave "ready with corrections"; all 4 blocking and 10 important corrections are applied below. Decisions taken 2026-10-24 (section 2). Lot 0 done 2026-10-24 (Python 3.11.9, Poetry 2.5.1, 22 tests green, MinIO up, raw data md5-verified and pushed). Lot 1 implemented 2026-10-24 (see "Lot 1 progress"); review corrections applied 2026-10-25; awaiting team approval of contracts 2/3. D5 decided 2026-10-25 (section 2), age rule anchored to the baseline the same day. Lot 2 implemented 2026-10-25 (see "Lot 2 progress"); `dvc.yaml` train stage deferred until Areej's pipeline exists. Lot 3 implemented 2026-11-24 (see "Lot 3 progress"): champion LightGBM v1 registered; test ROC-AUC, PR-AUC and the −15 % cost KPI missed, reported with their gaps.  Lot 4 implemented 2026-11-24 (see "Lot 4 progress"), with the promotion gate made relative (L4-1). Lots 6 and 7 implemented 2026-11-25 (see "Lot 6 progress", "Lot 7 progress"); Prefect wiring is Areej's.
 - **Integration with `dev` (2026-11-24).** The three branches are rebased onto `origin/dev` = `3ed70dc` (Areej's PR #2, DVC pipeline, and PR #3, drift simulator). Consequences:
   - **D2:** Areej's `crediscore.data.featurize` (`fix_days_employed` then `add_derived_features`) is THE shared function; our `data/features.py` is removed. Its float64 cast of the raw inputs (one-row requests with `None`) is ported into her file, in a commit for her review.
   - **D10:** her merged thin-file definition is adopted (at least 2 of 3 `EXT_SOURCE` missing, or `AMT_REQ_CREDIT_BUREAU_YEAR` NaN or 0): 39.7 % of the real train split, against 11.9 % for our old stand-in.
@@ -714,6 +714,28 @@ Stop point: a short review before it is wired into Prefect.
 
 **Done when:** automatic promotion is verified on a real case, with the history visible in the Registry.
 
+**Lot 6 coordinator decisions (final, 2026-11-25):**
+- **L6-1 prediction drift:** with `--model`, contract 4 gets an optional `prediction` object: `psi_proba` (same PSI as the features, bins on the reference), `acceptance_rate_ref` / `acceptance_rate_cur` (ACCEPTE share with the model's thresholds.json), `acceptance_rate_delta_pts`. Informative, alert rule unchanged. **Choice:** the key is always present, `null` without a model (fixed keys stay the contract's rule); `prediction` and `fairness` are appended after `alert`, so the seven old keys keep their order.
+- **L6-2 fairness over time:** optional `fairness` object: `evaluate.fairness` fields (gender and age raw / EO gaps, acceptance by group) on the labelled current rows with the model's decisions, plus `d5` = `{age_anchor_pts, checks, pass}` against the anchor of `--metrics` (default `reports/metrics.json`, `null` if absent). `null` without model, without `TARGET` or `CODE_GENDER`, or when the current batch fails the `auc_drop` label guard (`min_labelled`, `min_positives`, one class). Informative, no alert.
+- **L6-3 hand-off:** `docs/handoff/boucle-reentrainement.md` (French): detect_drift (exit 0 whatever the alert, read `alert`) → `train --model lightgbm --model-params configs/champion_model_params.json` (**frozen params, not `--tune`**: reproducible, about 1 min, challenger differs from the champion only by its data; tuning stays a reviewed one-off) → `registry --select --train <same file>` (no retry: each success is a new version; no champion = it becomes champion and promote says `no_challenger`) → `promote --data data/processed/holdout.parquet` (0 = promoted, call Iyed's Blue/Green; 1 = keep). End-to-end test on sqlite.
+- **L6-4 real check:** throwaway sqlite MLflow, port 5341, stopped afterwards.
+
+**Lot 6 progress (2026-11-25, branch `feature/monitoring-loop`, on `feature/drift-detection` 2e51110):**
+- [x] 1. Prediction drift (`prediction_drift`, tests `db0cc7d`, code `8a1c320`).
+- [x] 2. Fairness over time (`fairness_drift`, same commits). `_labelled` is now shared by `auc_drop` and `fairness_drift` (same guard). The `detect_drift` DVC stage runs without a model (both keys `null`), so its deps are unchanged.
+- [x] Contract 4 §9 (French), **for Areej and Iyed's review** (`6f2285a`): fields, `null` rule, proposed gauges (`acceptance_rate` from `acceptance_rate_cur`, `fairness_d5_pass`…, no alert rule), real example.
+- [x] 3. Loop hand-off for Areej (`1d5ea79`) and `tests/test_monitoring_loop.py` (`6eb9bae`, about 13 s, not marked `slow`: the marker is for timing tests): bootstrap champion, drift alert with `prediction` and `fairness`, retrain on a refreshed file, `registry --select` → challenger v2, promote **blocked by the D5 age gate** (the synthetic challenger learned the age signal more strongly: 24.5 pts vs limit 21.6; exit 1, aliases unchanged), then promoted with a test-only age margin of 10 (exit 0, champion → v2, challenger removed, `promotion_previous_champion = 1`, `promoted_at`).
+- [x] **Real chain** (throwaway server, port 5341; a first attempt failed on the Windows 260-character path limit of the scratchpad artifacts dir, rerun with a short temp dir): `models/model.joblib` logged and registered as **v1 champion**; crisis vs test with `--model models:/crediscore@champion`: drift_share 0.171, key PSI 0.262 / 0.231 / 0.676, auc_drop 0.009, **alert true**, `psi_proba` 0.031, acceptance 0.673 → 0.625 (−4.85 pts), fairness D5 pass (gender 7.8 / 6.5, age EO 34.0 ≤ 40.7); `train` frozen params on `train.parquet`: val AUC 0.7670, cost 0.3070 (identical to the champion); `registry --select`: tie, newest run chosen, **v2 challenger**; `promote --data data/processed/holdout.parquet`: **exit 0, promoted** (AUC 0.7591 = 0.7591, cost 0.3141 = 0.3141, gender 7.9 / 6.9, age EO 32.2 ≤ 40.7); Registry after: `champion` → v2, no `challenger`, v2 tagged `promotion_previous_champion = 1` and `promoted_at`. The challenger is the same model (same data and params): this proves the chain, not a gain. Server stopped.
+- [ ] 4. MLflow screenshots (runs comparison, Registry): **for the human**, from the team's MLflow UI (this session has read-only access and no browser capture).
+- [ ] Prefect wiring (`monitoring_flow`, `training_flow`, `run_deployment`, retries): **Areej's**, from the hand-off. Blue/Green call after exit 0: **Iyed's**.
+- **Own mutation check:** 33 mutants on the new drift code (prediction and fairness parts), `git archive` copy of `1d5ea79`, unmutated suite first (exit 0, imports checked from the copy). Round 1: 30 mutants, 28 killed, 1 survived, 1 invalid (match lost to black's reformatting). Round 2: the invalid one fixed plus 2 more: 3 killed. **Total 32 valid, 31 killed, 1 survivor, equivalent:** `fairness_drift` with `high` replaced by `low` (the audit only counts ACCEPTE, which depends on `low` only). Logs: `scratchpad/lot67/mut/mutation.log` and `mutation_extra.log` of the session.
+- Checks (2026-11-25, after lot 7): black, flake8, mypy strict green; **601 tests pass** (574 before the lot), coverage 94 %, `drift.py` 99 % (the `__main__` line).
+
+**Doubts / follow-ups:**
+- `registry --select` picks among every run on the same `train_data_hash`: with unchanged data the old champion's run ties with the new one (the newest wins on the real server). Harmless (same model), but Areej should only trigger training on refreshed data.
+- The first-ever model is registered straight as `champion`; the flow has to read `registry`'s `@champion` line to deploy it (documented, no exit-code change).
+- `fairness` uses the current batch's labels; in production they arrive months late, so the key is mostly `null` on fresh traffic. That is by design (label guard).
+
 ### Lot 7 — S8: report and slides · ~4 h
 
 **Report sections:**
@@ -725,6 +747,15 @@ Stop point: a short review before it is wired into Prefect.
 - why aliases rather than Staging/Production (SYNOPSIS L48 still says Staging → Production).
 
 **Slides and rehearsal:** results/KPI slides; rehearse the 1:00 and 2:30 demo slots.
+
+**Lot 7 decisions (coordinator, 2026-11-25):** all in French in `docs/rapport/`; every number cites a committed file (`reports/metrics.json`, this plan, contracts 2 and 4, the hand-off); missed targets stated plainly (AUC 0.747 vs 0.75, PR-AUC 0.227 vs 0.25, cost −9 % vs −15 %).
+
+**Lot 7 progress (2026-11-25):**
+- [x] `docs/rapport/modelisation.md` (`421aa45`, `309f12b`): MLflow comparison and test table, thresholds and cost (3 zones, D3/D8), SHAP (global figure, local example 100295, units, calibration caveat), fairness (D5, no_age experiment and the decision to keep age, thin file, fairness over time), drift (crisis, halves, scenario C, why the crisis AUC drop is small while PSI alerts, the PSI bin bug as a lesson), aliases vs stages, KPI table.
+- [x] `docs/rapport/slides-modelisation.md` (`583bc6c`): 6 slides with speaker notes, the 1:00 and 2:30 demo slots and what to prepare.
+- [x] `docs/rapport/walkthrough-achraf.md` (`c3e10d3`): one block per module (cost, split, pipeline, threshold, train, tune, evaluate, registry, promote, holdout, audit, shap_explainer, drift) and the guide's §9.3 MLflow / Evidently questions.
+- [ ] Rehearsal of the 1:00 and 2:30 slots, and the MLflow screenshots: the human.
+- [ ] Adversarial review of lots 6-7 by a fresh agent, and walkthrough with Achraf.
 
 ---
 
