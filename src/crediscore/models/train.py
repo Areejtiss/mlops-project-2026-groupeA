@@ -3,9 +3,17 @@
 Steps: load params; carve validation out of train (D1); fit the pipeline inside
 `CalibratedClassifierCV(ensemble=False)` (T2); optimize the 3-zone thresholds
 on validation (D3, D8); write `model.joblib`, `thresholds.json` and
-`metrics.json` (T4). If MLFLOW_TRACKING_URI is set, log one run with metrics,
-curves, the model (cloudpickle, all-optional signature, contract 2) and tags.
-The model is NOT registered here (registry: lot 3).
+`metrics.json` and `model_params.json` (T4). If MLFLOW_TRACKING_URI is set,
+log one run with metrics, curves, the model (cloudpickle, all-optional
+signature, contract 2) and tags. The model is NOT registered here
+(`crediscore.models.registry`).
+
+`--tune N` first runs N Optuna trials on the fit part (`crediscore.models.tune`,
+each trial a nested MLflow run), then fits the best params as above.
+`--model-params FILE` fixes the hyperparameters instead (e.g. the
+`model_params.json` of a tuned run). `--exclude COL` keeps COL in the input
+but out of the model and requires `--experiment NAME`, which tags the run
+(D5: `no_age`).
 
 The input parquet is featurized (Areej's output): it already has
 `params.features.all`, built by `crediscore.data.featurize` (`fix_days_employed`
@@ -14,6 +22,9 @@ then `add_derived_features`).
 Usage:
     poetry run python -m crediscore.models.train --model logreg
     poetry run python -m crediscore.models.train --model lightgbm --output-dir models
+    poetry run python -m crediscore.models.train --model xgboost --tune 25
+    poetry run python -m crediscore.models.train --model lightgbm --exclude AGE_YEARS
+        --experiment no_age --model-params models/model_params.json   (one line)
     # CML mode: train on a small file (split internally), also write roc.png
     poetry run python -m crediscore.models.train --output-dir reports/cml
         --sample tests/fixtures/ci_sample.parquet       (one line)
@@ -22,6 +33,7 @@ Defaults: --train data/processed/train.parquet, --params params.yaml.
 """
 
 import argparse
+import contextlib
 import hashlib
 import io
 import json
@@ -37,6 +49,8 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
+import mlflow  # noqa: E402
+import mlflow.sklearn  # noqa: E402
 import numpy as np  # noqa: E402
 import numpy.typing as npt  # noqa: E402
 import pandas as pd  # noqa: E402
@@ -56,7 +70,12 @@ from sklearn.metrics import (  # noqa: E402
 
 from crediscore.config import Params, load_params  # noqa: E402
 from crediscore.models.cost import DECISIONS  # noqa: E402
-from crediscore.models.pipeline import MODELS, build_pipeline, calibrate  # noqa: E402
+from crediscore.models.pipeline import (  # noqa: E402
+    MODELS,
+    build_pipeline,
+    calibrate,
+    imbalance_params,
+)
 from crediscore.models.split import split_validation  # noqa: E402
 from crediscore.models.threshold import (  # noqa: E402
     NEVER,
@@ -64,10 +83,16 @@ from crediscore.models.threshold import (  # noqa: E402
     optimize_thresholds,
     zone_metrics,
 )
+from crediscore.models.tune import SEARCH_SPACES, TrialCallback, tune  # noqa: E402
 
 EXPERIMENT = "crediscore"
 # Unit of the SHAP contributions of each model (contract 2 section 6).
-SHAP_UNIT = {"logreg": "log_odds", "lightgbm": "log_odds"}
+SHAP_UNIT = {
+    "logreg": "log_odds",
+    "lightgbm": "log_odds",
+    "xgboost": "log_odds",
+    "random_forest": "probability",
+}
 DVC_FILE = Path("data/raw/application_train.csv.dvc")
 
 
@@ -87,14 +112,25 @@ def prepare_xy(df: pd.DataFrame, params: Params) -> tuple[pd.DataFrame, np.ndarr
 
 
 def fit_model(
-    X: pd.DataFrame, y: np.ndarray, name: str, params: Params
+    X: pd.DataFrame,
+    y: np.ndarray,
+    name: str,
+    params: Params,
+    *,
+    numeric: list[str] | None = None,
+    model_params: dict[str, Any] | None = None,
 ) -> CalibratedClassifierCV:
-    """Fit the calibrated pipeline on the fit part (T2)."""
+    """Fit the calibrated pipeline on the fit part (T2).
+
+    `numeric` defaults to `params.features.numeric`; `model_params` override
+    the classifier defaults, on top of `imbalance_params` (T5).
+    """
     pipe = build_pipeline(
         name,
-        numeric=params.features.numeric,
+        numeric=params.features.numeric if numeric is None else numeric,
         categorical=params.features.categorical,
         seed=params.data.random_state,
+        model_params={**imbalance_params(name, y), **(model_params or {})},
     )
     return calibrate(pipe).fit(X, y)
 
@@ -221,16 +257,15 @@ def log_to_mlflow(
     figures: dict[str, Figure],
     counts: npt.NDArray[np.int64],
     train_data_hash: str,
+    extra_tags: dict[str, str],
 ) -> str:
-    """Log one run (not registered). Returns the run id.
+    """Log into the active run (not registered). Returns its run id.
 
     Tags `raw_data_hash` (DVC md5 of the raw CSV, if the pointer file exists)
-    and `train_data_hash` (md5 of the file actually trained on).
+    and `train_data_hash` (md5 of the file actually trained on), plus
+    `extra_tags` (experiment, excluded features). The hyperparameters are
+    logged as `model__<name>` params.
     """
-    import mlflow
-    import mlflow.sklearn
-
-    mlflow.set_experiment(EXPERIMENT)
     threshold_tags = {
         "threshold_low": repr(thresholds["low"]),
         "threshold_high": repr(thresholds["high"]),
@@ -242,67 +277,96 @@ def log_to_mlflow(
         "serialization_format": "cloudpickle",
         "train_data_hash": train_data_hash,
         **threshold_tags,
+        **extra_tags,
     }
     optional = [("git_sha", _git_sha()), ("raw_data_hash", read_dvc_md5(DVC_FILE))]
     for key, value in optional:
         if value is not None:
             tags[key] = value
-    with mlflow.start_run(run_name=name) as run:
-        mlflow.set_tags(tags)
+    run = mlflow.active_run()
+    if run is None:
+        raise RuntimeError("log_to_mlflow needs an active run")
+    mlflow.set_tags(tags)
+    mlflow.log_params(
+        {
+            "model": name,
+            "seed": params.data.random_state,
+            "val_size": params.data.val_size,
+            "n_fit": metrics["n_fit"],
+            "n_val": metrics["n_val"],
+            "cost_fn": params.cost.cost_fn,
+            "cost_fp": params.cost.cost_fp,
+            "cost_review": params.cost.cost_review,
+            "min_recall": params.threshold.min_recall,
+            "max_review_share": params.threshold.max_review_share,
+            "calibration": "isotonic_cv5_ensemble_false",
+            **{f"model__{k}": v for k, v in metrics["model_params"].items()},
+        }
+    )
+    if metrics["tune_trials"]:
         mlflow.log_params(
-            {
-                "model": name,
-                "seed": params.data.random_state,
-                "val_size": params.data.val_size,
-                "n_fit": metrics["n_fit"],
-                "n_val": metrics["n_val"],
-                "cost_fn": params.cost.cost_fn,
-                "cost_fp": params.cost.cost_fp,
-                "cost_review": params.cost.cost_review,
-                "min_recall": params.threshold.min_recall,
-                "max_review_share": params.threshold.max_review_share,
-                "calibration": "isotonic_cv5_ensemble_false",
-            }
+            {"tune_trials": metrics["tune_trials"], "tune_objective": "cv5_roc_auc"}
         )
-        mlflow.log_metrics({f"val_{k}": v for k, v in metrics["val"].items()})
-        mlflow.log_metric(
-            "val_accept_all_cost_per_file", metrics["accept_all_cost_per_file"]
-        )
-        mlflow.log_dict(thresholds, "thresholds.json")
-        mlflow.log_dict(metrics, "metrics.json")
-        labels = [f"TARGET={t}" for t in (0, 1)]
-        mlflow.log_dict(
-            {
-                lab: dict(zip(DECISIONS, map(int, row)))
-                for lab, row in zip(labels, counts)
-            },
-            "confusion_matrix.json",
-        )
-        for fig_name, fig in figures.items():
-            mlflow.log_figure(fig, f"{fig_name}.png")
-        mlflow.sklearn.log_model(
-            model,
-            name="model",
-            serialization_format="cloudpickle",
-            signature=build_signature(
-                params.features.numeric, params.features.categorical
-            ),
-            tags=threshold_tags,
-        )
-        return str(run.info.run_id)
+        mlflow.log_metric("best_cv_roc_auc", metrics["best_cv_roc_auc"])
+    mlflow.log_metrics({f"val_{k}": v for k, v in metrics["val"].items()})
+    mlflow.log_metric(
+        "val_accept_all_cost_per_file", metrics["accept_all_cost_per_file"]
+    )
+    mlflow.log_dict(thresholds, "thresholds.json")
+    mlflow.log_dict(metrics, "metrics.json")
+    mlflow.log_dict(metrics["model_params"], "model_params.json")
+    labels = [f"TARGET={t}" for t in (0, 1)]
+    mlflow.log_dict(
+        {lab: dict(zip(DECISIONS, map(int, row))) for lab, row in zip(labels, counts)},
+        "confusion_matrix.json",
+    )
+    for fig_name, fig in figures.items():
+        mlflow.log_figure(fig, f"{fig_name}.png")
+    mlflow.sklearn.log_model(
+        model,
+        name="model",
+        serialization_format="cloudpickle",
+        signature=build_signature(params.features.numeric, params.features.categorical),
+        tags=threshold_tags,
+    )
+    return str(run.info.run_id)
 
 
-def train(df: pd.DataFrame, name: str, params: Params) -> dict[str, Any]:
-    """Split, fit, calibrate and optimize the thresholds. No I/O.
+def log_trial(number: int, hp: dict[str, Any], cv_auc: float) -> None:
+    """Log one Optuna trial as a nested run of the active run."""
+    with mlflow.start_run(run_name=f"trial-{number}", nested=True):
+        mlflow.set_tag("trial", str(number))
+        mlflow.log_params(hp)
+        mlflow.log_metric("cv_roc_auc", cv_auc)
+
+
+def train(
+    df: pd.DataFrame,
+    name: str,
+    params: Params,
+    *,
+    model_params: dict[str, Any] | None = None,
+    exclude: tuple[str, ...] = (),
+    n_trials: int = 0,
+    on_trial: TrialCallback | None = None,
+) -> dict[str, Any]:
+    """Split, (tune,) fit, calibrate and optimize the thresholds. No I/O.
 
     Args:
         df: Featurized training rows (features, target).
-        name: Model name ("logreg" or "lightgbm").
+        name: Model name, a key of `MODELS`.
         params: Validated parameters.
+        model_params: Fixed hyperparameters, over the `build_pipeline` defaults.
+        exclude: Numeric features kept in the input but not given to the model.
+        n_trials: If > 0, Optuna trials on the fit part; the best params are
+            merged over `model_params`.
+        on_trial: Passed to `tune` (e.g. `log_trial`).
 
     Returns:
-        model, thresholds (dict), metrics (dict), and the validation y/proba.
+        model, thresholds (dict), metrics (dict, with the `model_params`
+        used), and the validation y/proba.
     """
+    numeric = [c for c in params.features.numeric if c not in exclude]
     fit, val = split_validation(
         df,
         target=params.target,
@@ -311,7 +375,21 @@ def train(df: pd.DataFrame, name: str, params: Params) -> dict[str, Any]:
     )
     X_fit, y_fit = prepare_xy(fit, params)
     X_val, y_val = prepare_xy(val, params)
-    model = fit_model(X_fit, y_fit, name, params)
+    hp = dict(model_params or {})
+    best_cv = None
+    if n_trials > 0:
+        best, best_cv = tune(
+            X_fit,
+            y_fit,
+            name,
+            numeric=numeric,
+            categorical=params.features.categorical,
+            seed=params.data.random_state,
+            n_trials=n_trials,
+            on_trial=on_trial,
+        )
+        hp.update(best)
+    model = fit_model(X_fit, y_fit, name, params, numeric=numeric, model_params=hp)
     proba = model.predict_proba(X_val)[:, 1]
     costs = {
         "cost_fn": params.cost.cost_fn,
@@ -337,6 +415,10 @@ def train(df: pd.DataFrame, name: str, params: Params) -> dict[str, Any]:
         "n_val": len(val),
         "val": val_metrics,
         "accept_all_cost_per_file": accept_all,
+        "model_params": hp,
+        "excluded_features": list(exclude),
+        "tune_trials": n_trials,
+        "best_cv_roc_auc": best_cv,
     }
     return {
         "model": model,
@@ -362,43 +444,90 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="CML mode: train on this file instead of --train, also write roc.png",
     )
+    parser.add_argument(
+        "--tune", type=int, default=0, metavar="N", help="Optuna trials (L3-2)"
+    )
+    parser.add_argument(
+        "--model-params", type=Path, default=None, help="JSON hyperparameters"
+    )
+    parser.add_argument(
+        "--exclude", action="append", default=[], help="numeric feature to leave out"
+    )
+    parser.add_argument("--experiment", default=None, help="value of the tag")
     args = parser.parse_args(argv)
+    params = load_params(args.params)
+    unknown = set(args.exclude) - set(params.features.numeric)
+    if unknown:
+        parser.error(f"--exclude: not numeric features: {sorted(unknown)}")
+    if args.exclude and not args.experiment:
+        # A run without some features is a measurement, never a candidate.
+        parser.error("--exclude needs --experiment (e.g. --experiment no_age)")
+    if args.tune and args.model not in SEARCH_SPACES:
+        parser.error(f"--tune: no search space for {args.model}")
     # MLflow prints an emoji: a redirected Windows console (cp1252) would crash.
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(errors="replace")
 
-    params = load_params(args.params)
     data_file: Path = args.sample or args.train
     df = pd.read_parquet(data_file)
-    result = train(df, args.model, params)
-    th, metrics = result["thresholds"], result["metrics"]
-    y_val, proba = result["y_val"], result["proba_val"]
-
-    out: Path = args.output_dir
-    out.mkdir(parents=True, exist_ok=True)
-    joblib.dump(result["model"], out / "model.joblib")
-    (out / "thresholds.json").write_text(json.dumps(th, indent=2) + "\n", "utf-8")
-    (out / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n", "utf-8")
-    figures = make_figures(y_val, proba, th["low"], th["high"])
-    if args.sample is not None:
-        figures["roc_curve"].savefig(out / "roc.png", dpi=100)
-    if os.environ.get("MLFLOW_TRACKING_URI"):
-        run_id = log_to_mlflow(
-            model=result["model"],
-            name=args.model,
-            params=params,
-            metrics=metrics,
-            thresholds=th,
-            figures=figures,
-            counts=confusion_counts(y_val, proba, th["low"], th["high"]),
-            train_data_hash=file_md5(data_file),
+    model_params = (
+        json.loads(args.model_params.read_text(encoding="utf-8"))
+        if args.model_params
+        else None
+    )
+    tracking = bool(os.environ.get("MLFLOW_TRACKING_URI"))
+    run_name = args.model + (f"-{args.experiment}" if args.experiment else "")
+    if tracking:
+        mlflow.set_experiment(EXPERIMENT)
+    run_ctx = mlflow.start_run(run_name=run_name) if tracking else None
+    with run_ctx or contextlib.nullcontext():
+        result = train(
+            df,
+            args.model,
+            params,
+            model_params=model_params,
+            exclude=tuple(args.exclude),
+            n_trials=args.tune,
+            on_trial=log_trial if tracking else None,
         )
-        print(f"MLflow run {run_id}")
+        th, metrics = result["thresholds"], result["metrics"]
+        y_val, proba = result["y_val"], result["proba_val"]
+
+        out: Path = args.output_dir
+        out.mkdir(parents=True, exist_ok=True)
+        joblib.dump(result["model"], out / "model.joblib")
+        for file_name, payload in [
+            ("thresholds.json", th),
+            ("metrics.json", metrics),
+            ("model_params.json", metrics["model_params"]),
+        ]:
+            (out / file_name).write_text(json.dumps(payload, indent=2) + "\n", "utf-8")
+        figures = make_figures(y_val, proba, th["low"], th["high"])
+        if args.sample is not None:
+            figures["roc_curve"].savefig(out / "roc.png", dpi=100)
+        if tracking:
+            extra_tags = {}
+            if args.experiment:
+                extra_tags["experiment"] = args.experiment
+            if args.exclude:
+                extra_tags["excluded_features"] = ",".join(args.exclude)
+            run_id = log_to_mlflow(
+                model=result["model"],
+                name=args.model,
+                params=params,
+                metrics=metrics,
+                thresholds=th,
+                figures=figures,
+                counts=confusion_counts(y_val, proba, th["low"], th["high"]),
+                train_data_hash=file_md5(data_file),
+                extra_tags=extra_tags,
+            )
+            print(f"MLflow run {run_id}")
     for fig in figures.values():
         plt.close(fig)
     val = metrics["val"]
     print(
-        f"{args.model}: val ROC-AUC {val['roc_auc']:.4f}, PR-AUC {val['pr_auc']:.4f}, "
+        f"{run_name}: val ROC-AUC {val['roc_auc']:.4f}, PR-AUC {val['pr_auc']:.4f}, "
         f"Brier {val['brier']:.4f} | thresholds {th['low']!r} / {th['high']!r} | "
         f"recall {val['recall']:.3f}, review {val['review_share']:.3f}, "
         f"cost/file {val['cost_per_file']:.4f} (accept all "

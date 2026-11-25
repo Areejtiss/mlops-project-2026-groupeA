@@ -17,7 +17,7 @@ Per-person context (who is using this copy, their plan) lives in
 | Area | Owner | Files |
 |---|---|---|
 | Data, DVC, Prefect, drift simulator | Areej | `params.yaml`, `config.py`, `data/*`, `flows/*`, `prefect.yaml`, `monitoring/simulator.py`, `dvc.yaml` data stages |
-| Models, MLflow, SHAP, fairness, drift calc | Achraf | `models/*`, `explain/*`, `fairness/*`, `monitoring/drift.py`, `dvc.yaml` train/evaluate stages, `notebooks/` |
+| Models, MLflow, SHAP, fairness, drift calc | Achraf | `models/*`, `explain/*`, `fairness/*`, `monitoring/drift.py`, `dvc.yaml` train/evaluate stages, `configs/`, `notebooks/` |
 | API, Docker, CI/CD, Prometheus | Iyed | `api/*`, `Dockerfile`, `docker-compose.yml`, `.github/*`, `deploy/*`, `scripts/deploy_blue_green.py`, `monitoring/metrics.py` |
 
 Shared files (`tests/conftest.py`, `pyproject.toml`/`poetry.lock`, `README.md`):

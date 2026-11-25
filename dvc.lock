@@ -219,3 +219,218 @@ stages:
       hash: md5
       md5: e5b6bbe040e2eb85975341abe3964465
       size: 2294504
+  train:
+    cmd: python -m crediscore.models.train --model lightgbm --model-params
+      configs/champion_model_params.json --output-dir models
+    deps:
+    - path: configs/champion_model_params.json
+      hash: md5
+      md5: 7272b1da1a32e8fd6f4e9a0c8c9a1dda
+      size: 192
+    - path: data/processed/train.parquet
+      hash: md5
+      md5: d0178dcfbc4973fc61524219c72ec849
+      size: 4809682
+    - path: src/crediscore/config.py
+      hash: md5
+      md5: 55274773ea73cfedfd67f5088a1d051a
+      size: 4641
+    - path: src/crediscore/models/cost.py
+      hash: md5
+      md5: a1104294bc97af39ad7added73f5c331
+      size: 2731
+    - path: src/crediscore/models/pipeline.py
+      hash: md5
+      md5: b6861f441ec4080ef0df49dc8b4e187b
+      size: 5901
+    - path: src/crediscore/models/split.py
+      hash: md5
+      md5: 665bc2ecf091e5a5d6b423b3cc81e570
+      size: 1144
+    - path: src/crediscore/models/threshold.py
+      hash: md5
+      md5: 96f507262aadcb4c30d499ebca85fa64
+      size: 7840
+    - path: src/crediscore/models/train.py
+      hash: md5
+      md5: d2847ee0e69ca885f3a59b0fea4a68ac
+      size: 19896
+    - path: src/crediscore/models/tune.py
+      hash: md5
+      md5: 12fe4330a703a9cd9f721a28dd0614f7
+      size: 4632
+    params:
+      params.yaml:
+        cost:
+          cost_fn: 5
+          cost_fp: 1
+          cost_review: 0.3
+        data.random_state: 42
+        data.val_size: 0.2
+        features:
+          numeric:
+          - AMT_INCOME_TOTAL
+          - AMT_CREDIT
+          - AMT_ANNUITY
+          - AMT_GOODS_PRICE
+          - EXT_SOURCE_1
+          - EXT_SOURCE_2
+          - EXT_SOURCE_3
+          - CNT_CHILDREN
+          - CNT_FAM_MEMBERS
+          - REGION_POPULATION_RELATIVE
+          - REGION_RATING_CLIENT_W_CITY
+          - DAYS_REGISTRATION
+          - DAYS_ID_PUBLISH
+          - DAYS_LAST_PHONE_CHANGE
+          - REG_CITY_NOT_WORK_CITY
+          - LIVE_CITY_NOT_WORK_CITY
+          - FLAG_WORK_PHONE
+          - FLAG_PHONE
+          - FLAG_DOCUMENT_3
+          - OBS_30_CNT_SOCIAL_CIRCLE
+          - DEF_30_CNT_SOCIAL_CIRCLE
+          - AMT_REQ_CREDIT_BUREAU_YEAR
+          - TOTALAREA_MODE
+          - ANNUITY_INCOME_RATIO
+          - CREDIT_INCOME_RATIO
+          - CREDIT_TERM
+          - AGE_YEARS
+          - EMPLOYED_YEARS
+          - DAYS_EMPLOYED_ANOM
+          - EXT_SOURCE_MISSING_COUNT
+          - IS_THIN_FILE
+          categorical:
+          - NAME_CONTRACT_TYPE
+          - NAME_INCOME_TYPE
+          - NAME_EDUCATION_TYPE
+          - NAME_FAMILY_STATUS
+          - NAME_HOUSING_TYPE
+          - OCCUPATION_TYPE
+          - FLAG_OWN_CAR
+          - FLAG_OWN_REALTY
+          - NAME_TYPE_SUITE
+          - ORGANIZATION_TYPE
+        target: TARGET
+        threshold.max_review_share: 0.15
+        threshold.min_recall: 0.65
+    outs:
+    - path: models/model.joblib
+      hash: md5
+      md5: 66def444607dec07a851a3ce56d5f138
+      size: 975901
+    - path: models/thresholds.json
+      hash: md5
+      md5: f469519223cda2075c1afcc5ee8c2d32
+      size: 285
+  evaluate:
+    cmd: python -m crediscore.models.evaluate --model models
+    deps:
+    - path: data/processed/test.parquet
+      hash: md5
+      md5: 0b61ce3cb86b9dae5708e898d3835948
+      size: 1465492
+    - path: data/processed/train.parquet
+      hash: md5
+      md5: d0178dcfbc4973fc61524219c72ec849
+      size: 4809682
+    - path: models/model.joblib
+      hash: md5
+      md5: 66def444607dec07a851a3ce56d5f138
+      size: 975901
+    - path: models/thresholds.json
+      hash: md5
+      md5: f469519223cda2075c1afcc5ee8c2d32
+      size: 285
+    - path: src/crediscore/config.py
+      hash: md5
+      md5: 55274773ea73cfedfd67f5088a1d051a
+      size: 4641
+    - path: src/crediscore/models/cost.py
+      hash: md5
+      md5: a1104294bc97af39ad7added73f5c331
+      size: 2731
+    - path: src/crediscore/models/evaluate.py
+      hash: md5
+      md5: cd1deb85ddcb6e5092823fa83cffc673
+      size: 15163
+    - path: src/crediscore/models/pipeline.py
+      hash: md5
+      md5: b6861f441ec4080ef0df49dc8b4e187b
+      size: 5901
+    - path: src/crediscore/models/split.py
+      hash: md5
+      md5: 665bc2ecf091e5a5d6b423b3cc81e570
+      size: 1144
+    - path: src/crediscore/models/threshold.py
+      hash: md5
+      md5: 96f507262aadcb4c30d499ebca85fa64
+      size: 7840
+    - path: src/crediscore/models/train.py
+      hash: md5
+      md5: d2847ee0e69ca885f3a59b0fea4a68ac
+      size: 19896
+    - path: src/crediscore/models/tune.py
+      hash: md5
+      md5: 12fe4330a703a9cd9f721a28dd0614f7
+      size: 4632
+    params:
+      params.yaml:
+        cost:
+          cost_fn: 5
+          cost_fp: 1
+          cost_review: 0.3
+        data.random_state: 42
+        data.val_size: 0.2
+        features:
+          numeric:
+          - AMT_INCOME_TOTAL
+          - AMT_CREDIT
+          - AMT_ANNUITY
+          - AMT_GOODS_PRICE
+          - EXT_SOURCE_1
+          - EXT_SOURCE_2
+          - EXT_SOURCE_3
+          - CNT_CHILDREN
+          - CNT_FAM_MEMBERS
+          - REGION_POPULATION_RELATIVE
+          - REGION_RATING_CLIENT_W_CITY
+          - DAYS_REGISTRATION
+          - DAYS_ID_PUBLISH
+          - DAYS_LAST_PHONE_CHANGE
+          - REG_CITY_NOT_WORK_CITY
+          - LIVE_CITY_NOT_WORK_CITY
+          - FLAG_WORK_PHONE
+          - FLAG_PHONE
+          - FLAG_DOCUMENT_3
+          - OBS_30_CNT_SOCIAL_CIRCLE
+          - DEF_30_CNT_SOCIAL_CIRCLE
+          - AMT_REQ_CREDIT_BUREAU_YEAR
+          - TOTALAREA_MODE
+          - ANNUITY_INCOME_RATIO
+          - CREDIT_INCOME_RATIO
+          - CREDIT_TERM
+          - AGE_YEARS
+          - EMPLOYED_YEARS
+          - DAYS_EMPLOYED_ANOM
+          - EXT_SOURCE_MISSING_COUNT
+          - IS_THIN_FILE
+          categorical:
+          - NAME_CONTRACT_TYPE
+          - NAME_INCOME_TYPE
+          - NAME_EDUCATION_TYPE
+          - NAME_FAMILY_STATUS
+          - NAME_HOUSING_TYPE
+          - OCCUPATION_TYPE
+          - FLAG_OWN_CAR
+          - FLAG_OWN_REALTY
+          - NAME_TYPE_SUITE
+          - ORGANIZATION_TYPE
+        target: TARGET
+        threshold.max_review_share: 0.15
+        threshold.min_recall: 0.65
+    outs:
+    - path: reports/metrics.json
+      hash: md5
+      md5: cfb8beb6bbfe9d5ea149e10274ceee6d
+      size: 5312
