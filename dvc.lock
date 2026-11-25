@@ -233,8 +233,8 @@ stages:
       size: 4809682
     - path: src/crediscore/config.py
       hash: md5
-      md5: 55274773ea73cfedfd67f5088a1d051a
-      size: 4641
+      md5: d7a44651617c159d1930af70112f9e26
+      size: 5237
     - path: src/crediscore/models/cost.py
       hash: md5
       md5: a1104294bc97af39ad7added73f5c331
@@ -344,8 +344,8 @@ stages:
       size: 285
     - path: src/crediscore/config.py
       hash: md5
-      md5: 55274773ea73cfedfd67f5088a1d051a
-      size: 4641
+      md5: d7a44651617c159d1930af70112f9e26
+      size: 5237
     - path: src/crediscore/fairness/audit.py
       hash: md5
       md5: 9c1a400ac85d9f2ac55a262eedd0bc62
@@ -356,8 +356,8 @@ stages:
       size: 2731
     - path: src/crediscore/models/evaluate.py
       hash: md5
-      md5: b203d1f139452c2415004c197ff9c668
-      size: 12421
+      md5: 52eb1946b5cf687a72c0783cc2c30f7a
+      size: 14685
     - path: src/crediscore/models/pipeline.py
       hash: md5
       md5: b6861f441ec4080ef0df49dc8b4e187b
